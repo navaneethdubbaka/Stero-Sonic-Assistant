@@ -1,0 +1,160 @@
+.reasoning-display {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 15px;
+  margin-top: 20px;
+  border: 1px solid #e9ecef;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.reasoning-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.reasoning-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #495057;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.reasoning-status {
+  font-size: 12px;
+  color: #6c757d;
+  font-weight: 600;
+}
+
+.reasoning-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reasoning-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  background: white;
+  border-radius: 8px;
+  border-left: 3px solid #dee2e6;
+  transition: all 0.3s ease;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.reasoning-step.thinking {
+  border-left-color: #007bff;
+  background: #e7f3ff;
+}
+
+.reasoning-step.action {
+  border-left-color: #28a745;
+  background: #e8f5e9;
+}
+
+.reasoning-step.result {
+  border-left-color: #ffc107;
+  background: #fff9e6;
+}
+
+.reasoning-step.success {
+  border-left-color: #28a745;
+  background: #e8f5e9;
+}
+
+.reasoning-step.error {
+  border-left-color: #dc3545;
+  background: #ffebee;
+}
+
+.reasoning-step.processing {
+  border-left-color: #6c757d;
+  background: #f8f9fa;
+}
+
+.reasoning-step.active {
+  border-left-color: #007bff;
+  background: #e7f3ff;
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-left-color: #007bff;
+  }
+  50% {
+    border-left-color: #0056b3;
+  }
+}
+
+.step-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.step-content {
+  flex: 1;
+  font-size: 13px;
+  color: #212529;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+.step-loader {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #dee2e6;
+  border-top-color: #007bff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.reasoning-step.processing .step-content {
+  color: #6c757d;
+  font-style: italic;
+}
+
+.reasoning-step.thinking .step-content {
+  color: #004085;
+}
+
+.reasoning-step.action .step-content {
+  color: #155724;
+  font-weight: 500;
+}
+
+.reasoning-step.result .step-content {
+  color: #856404;
+}
+
+.reasoning-step.error .step-content {
+  color: #721c24;
+}
+

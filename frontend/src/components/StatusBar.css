@@ -1,0 +1,66 @@
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 15px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  animation: pulse-dot 2s infinite;
+}
+
+.status-dot.info {
+  background: #2196f3;
+}
+
+.status-dot.listening {
+  background: #4caf50;
+  animation: pulse-dot 1s infinite;
+}
+
+.status-dot.error {
+  background: #f44336;
+  animation: none;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.status-message {
+  font-weight: 600;
+  color: #333;
+  font-size: 14px;
+}
+
+.status-meta {
+  display: flex;
+  gap: 15px;
+}
+
+.status-mode {
+  font-size: 12px;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+

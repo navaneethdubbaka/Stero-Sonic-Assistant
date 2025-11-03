@@ -43,8 +43,17 @@ class SendEmailInput(BaseModel):
 
 
 class SendWhatsAppInput(BaseModel):
-    name: str = Field(description="Name of the contact from contacts file")
+    name: Optional[str] = Field(None, description="Contact name from contacts file (optional)")
+    phone_number: Optional[str] = Field(None, description="Recipient phone number with country code (e.g., +15551234567)")
     message: str = Field(description="Message to send via WhatsApp")
+
+    @root_validator(pre=True)
+    def _require_name_or_number(cls, values):
+        if not values.get('name') and not values.get('phone_number'):
+            # Allow some agents that put recipient under 'to'
+            if values.get('to'):
+                values['name'] = values.get('to')
+        return values
 
 
 class StoreDataInput(BaseModel):
@@ -109,12 +118,64 @@ def send_email(to: str, content: str, attachment_path: Optional[str] = None) -> 
     return f"Failed to send email: {result.get('error', 'Unknown error')}"
 
 
-def send_whatsapp(name: str, message: str) -> str:
-    """Send a WhatsApp message to a contact"""
-    result = whatsapp_service.send_message(name, message)
+def send_whatsapp(recipient: str, message: str) -> str:
+    """Send a WhatsApp message to a contact name or direct phone number"""
+    result = whatsapp_service.send_message(recipient, message)
     if result.get("success"):
-        return f"WhatsApp message sent successfully to {name}"
+        return f"WhatsApp message sent successfully"
     return f"Failed to send WhatsApp message: {result.get('error', 'Unknown error')}"
+
+
+def send_whatsapp_tool(name: Optional[str] = None, phone_number: Optional[str] = None, message: str = "", to: Optional[str] = None, **kwargs) -> str:
+    """Wrapper that accepts name or phone_number (or 'to' alias) and sends via WhatsApp.
+
+    Agents may supply inputs with different keys; this consolidates into one recipient string.
+    """
+    recipient = phone_number or name or to or ""
+    # Also check common alternate nesting
+    if not recipient and isinstance(kwargs.get('recipient'), str):
+        recipient = kwargs.get('recipient')
+    raw_arg = kwargs.get('__arg')
+    if not recipient and isinstance(raw_arg, str):
+        recipient = raw_arg
+
+    # If recipient is a dict-like string, try to parse and extract fields
+    def _try_parse_dict_string(s: str):
+        try:
+            j = s
+            if s.strip().startswith("'") or s.strip().startswith('{'):
+                j = s.replace("'", '"')
+            data = json.loads(j)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            return None
+        return None
+
+    if isinstance(recipient, str) and recipient.strip().startswith('{'):
+        parsed = _try_parse_dict_string(recipient)
+        if parsed:
+            # Prefer explicit phone_number, fallback to name/to
+            pn = parsed.get('phone_number') or parsed.get('to')
+            nm = parsed.get('name')
+            msg = parsed.get('message', message)
+            recipient = pn or nm or recipient
+            message = msg
+
+    # Also allow full payload in __arg/input
+    payload = None
+    if isinstance(raw_arg, str) and raw_arg.strip().startswith('{'):
+        payload = _try_parse_dict_string(raw_arg)
+    if payload is None and isinstance(kwargs.get('input'), str) and kwargs.get('input').strip().startswith('{'):
+        payload = _try_parse_dict_string(kwargs.get('input'))
+    if isinstance(payload, dict):
+        recipient = payload.get('phone_number') or payload.get('name') or recipient
+        if not message:
+            message = payload.get('message', message)
+
+    if not recipient:
+        return "Failed to send WhatsApp message: No recipient provided"
+    return send_whatsapp(str(recipient), message)
 
 
 def capture_camera_image(*args, **kwargs) -> str:
@@ -365,9 +426,9 @@ def get_all_tools():
             args_schema=SendEmailInput
         ),
         StructuredTool.from_function(
-            func=send_whatsapp,
+            func=send_whatsapp_tool,
             name="send_whatsapp",
-            description="Send a WhatsApp message to a contact. Use this when user wants to send a WhatsApp message.",
+            description="Send a WhatsApp message to a contact NAME or PHONE NUMBER (with country code). Prefer phone_number if provided.",
             args_schema=SendWhatsAppInput
         ),
         StructuredTool.from_function(
@@ -490,8 +551,8 @@ def get_all_tools():
             ),
             Tool(
                 name="send_whatsapp",
-                func=lambda args: (lambda a=_parse_args(args): send_whatsapp(a.get('name', ''), a.get('message', '')))(),
-                description="Send a WhatsApp message to a contact. Input should be dict with 'name' and 'message'"
+                func=lambda args: (lambda a=_parse_args(args): send_whatsapp_tool(**a))(),
+                description="Send a WhatsApp message to NAME or PHONE NUMBER (with country code). Input should include 'phone_number' (preferred) or 'name', and 'message'"
             ),
             Tool(
                 name="capture_camera_image",

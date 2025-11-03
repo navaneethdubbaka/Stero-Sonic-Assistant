@@ -264,3 +264,108 @@ class SystemService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+
+    def get_running_apps(self, include_system: bool = False) -> dict:
+        """Return a list of running user-facing applications with pid, name, exe, and window title when available.
+
+        include_system: if False, filters out obvious Windows/system/background processes.
+        """
+        try:
+            user_visible = []
+            system_names = {
+                'system', 'system idle process', 'idle', 'svchost.exe', 'conhost.exe', 'smss.exe', 'csrss.exe',
+                'wininit.exe', 'services.exe', 'lsass.exe', 'winlogon.exe', 'dllhost.exe', 'ctfmon.exe',
+                'fontdrvhost.exe', 'explorer.exe', 'searchui.exe', 'searchapp.exe', 'runtimebroker.exe',
+                'sihost.exe', 'taskhostw.exe', 'backgroundtaskhost.exe', 'audiodg.exe'
+            }
+
+            # Try to import win32 APIs for window titles
+            win32_available = False
+            try:
+                import win32process
+                import win32gui
+                win32_available = True
+            except Exception:
+                win32_available = False
+
+            pid_to_title = {}
+            if win32_available:
+                try:
+                    def enum_window_callback(hwnd, acc):
+                        if not win32gui.IsWindowVisible(hwnd):
+                            return
+                        title = win32gui.GetWindowText(hwnd)
+                        if not title:
+                            return
+                        try:
+                            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                            acc[pid] = title
+                        except Exception:
+                            pass
+                    win32gui.EnumWindows(enum_window_callback, pid_to_title)
+                except Exception:
+                    pid_to_title = {}
+
+            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                try:
+                    name = (proc.info.get('name') or '').lower()
+                    exe = (proc.info.get('exe') or '')
+                    pid = proc.info.get('pid')
+                    if not include_system and (not name or name in system_names):
+                        continue
+                    title = pid_to_title.get(pid)
+                    # Heuristic: consider user-facing if has a window title or known app names
+                    likely_user_app = bool(title) or any(k in name for k in [
+                        'chrome', 'edge', 'firefox', 'spotify', 'code', 'studio', 'word', 'excel', 'powerpnt',
+                        'notepad', 'whatsapp', 'discord', 'slack', 'outlook', 'zoom', 'teams', 'vlc'
+                    ])
+                    if include_system or likely_user_app:
+                        user_visible.append({
+                            'pid': pid,
+                            'name': proc.info.get('name'),
+                            'exe': exe,
+                            'window_title': title
+                        })
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            return {"success": True, "apps": user_visible}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def close_apps_by_names(self, names: List[str]) -> dict:
+        """Close applications whose process name or executable matches any of the provided names (case-insensitive).
+
+        Names can be friendly like "spotify" or executable like "Spotify.exe".
+        Skips critical system processes.
+        """
+        try:
+            if not names:
+                return {"success": False, "error": "No application names provided"}
+            names_lower = [n.lower() for n in names]
+            protected = {
+                'system', 'system idle process', 'explorer.exe', 'csrss.exe', 'lsass.exe', 'wininit.exe',
+                'services.exe', 'smss.exe', 'winlogon.exe', 'svchost.exe'
+            }
+            closed = []
+            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                try:
+                    name = (proc.info.get('name') or '')
+                    exe = (proc.info.get('exe') or '')
+                    lname = name.lower()
+                    if lname in protected:
+                        continue
+                    match = any(
+                        key in lname or (exe and exe.lower().endswith(key))
+                        for key in names_lower
+                    )
+                    if match:
+                        p = psutil.Process(proc.info['pid'])
+                        p.terminate()
+                        closed.append({"name": name, "pid": proc.info['pid']})
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            return {"success": True, "closed": closed}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+

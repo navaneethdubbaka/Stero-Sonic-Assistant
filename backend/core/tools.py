@@ -8,8 +8,9 @@ try:
     from langchain_core.tools import StructuredTool
 except ImportError:
     from langchain.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from typing import Optional, List
+import json
 import sys
 from pathlib import Path
 
@@ -83,6 +84,21 @@ class OpenAppInput(BaseModel):
 class CloseProcessesInput(BaseModel):
     exe_list: List[str] = Field(description="List of executable names to close (e.g., ['chrome.exe', 'notepad.exe'])")
 
+
+class CloseAppsByNamesInput(BaseModel):
+    names: Optional[List[str]] = Field(None, description="List of application names (e.g., ['chrome','spotify','notepad.exe']) to close")
+    app_names: Optional[List[str]] = Field(None, description="Alias for names; some agents send 'app_names'")
+
+    @root_validator(pre=True)
+    def _coalesce_names(cls, values):
+        # Accept either 'names' or 'app_names'
+        if (not values.get('names')) and values.get('app_names'):
+            values['names'] = values.get('app_names')
+        return values
+
+
+class ListRunningAppsInput(BaseModel):
+    include_system: Optional[bool] = Field(False, description="Include system/background processes as well")
 
 # Tool functions
 def send_email(to: str, content: str, attachment_path: Optional[str] = None) -> str:
@@ -193,6 +209,90 @@ def close_processes(exe_list: List[str]) -> str:
     return f"Failed to close processes: {result.get('error', 'Unknown error')}"
 
 
+def list_running_apps(include_system: Optional[bool] = False) -> str:
+    """List running user-facing applications with pid, name, exe, and optional window title"""
+    result = system_service.get_running_apps(include_system=bool(include_system))
+    if not result.get("success"):
+        return f"Failed to list running apps: {result.get('error', 'Unknown error')}"
+    apps = result.get("apps", [])
+    if not apps:
+        return "No running applications found"
+    # Produce a concise, LLM-parsable listing
+    lines = [f"{a.get('name','Unknown')} (pid {a.get('pid')}): {a.get('window_title') or ''}".strip() for a in apps]
+    return "\n".join(lines)
+
+
+def close_apps_by_names(names: List[str]) -> str:
+    """Close applications by friendly names or executable names"""
+    result = system_service.close_apps_by_names(names)
+    if result.get("success"):
+        closed = result.get("closed", [])
+        if closed:
+            names_str = ", ".join(f"{c.get('name','Unknown')} (pid {c.get('pid')})" for c in closed)
+            return f"Closed: {names_str}"
+        return "No matching applications found to close"
+    return f"Failed to close apps: {result.get('error','Unknown error')}"
+
+
+def close_apps_by_names_tool(names: Optional[List[str]] = None, app_names: Optional[List[str]] = None, **kwargs) -> str:
+    """Wrapper accepting either 'names' or 'app_names' (from dict/JSON/kwargs) and delegating.
+
+    Accepts inputs in multiple shapes to be resilient to agent formatting.
+    """
+    merged = names or app_names
+    # Try kwargs
+    if not merged and kwargs:
+        if isinstance(kwargs.get('names'), list):
+            merged = kwargs.get('names')
+        elif isinstance(kwargs.get('app_names'), list):
+            merged = kwargs.get('app_names')
+        elif 'input' in kwargs:
+            raw = kwargs.get('input')
+            try:
+                if isinstance(raw, str):
+                    parsed = json.loads(raw)
+                else:
+                    parsed = raw
+                if isinstance(parsed, dict):
+                    merged = parsed.get('names') or parsed.get('app_names')
+                elif isinstance(parsed, list):
+                    merged = parsed
+                elif isinstance(parsed, str):
+                    merged = [s.strip() for s in parsed.split(',') if s.strip()]
+            except Exception:
+                if isinstance(raw, str):
+                    merged = [s.strip() for s in raw.split(',') if s.strip()]
+        elif '__arg' in kwargs:
+            raw = kwargs.get('__arg')
+            # Try JSON first (after converting single quotes to double quotes)
+            if isinstance(raw, str):
+                try:
+                    j = raw.replace("'", '"')
+                    parsed = json.loads(j)
+                    if isinstance(parsed, dict):
+                        merged = parsed.get('names') or parsed.get('app_names')
+                    elif isinstance(parsed, list):
+                        merged = parsed
+                except Exception:
+                    # Fallback: naive bracket extraction of a list inside the string
+                    try:
+                        start = raw.find('[')
+                        end = raw.rfind(']')
+                        if start != -1 and end != -1 and end > start:
+                            inner = raw[start+1:end]
+                            parts = [p.strip().strip('"').strip("'") for p in inner.split(',')]
+                            merged = [p for p in parts if p]
+                    except Exception:
+                        pass
+    # Final normalization
+    if not merged:
+        return "Failed to close apps: No application names provided"
+    if isinstance(merged, str):
+        merged = [merged]
+    merged = [str(x).strip() for x in merged if str(x).strip()]
+    return close_apps_by_names(merged)
+
+
 def store_data(key: str, value: str) -> str:
     """Store key-value data for later retrieval"""
     result = data_service.store_data(key, value)
@@ -242,6 +342,18 @@ def scan_screen_with_lens(*args, **kwargs) -> str:
 def get_all_tools():
     """Get all available tools for the agent"""
     tools = []
+    
+    # Fallback parsing helper: accept dict or JSON string
+    def _parse_args(args):
+        if isinstance(args, dict):
+            return args
+        if isinstance(args, str):
+            try:
+                parsed = json.loads(args)
+                return parsed if isinstance(parsed, dict) else {"__arg": parsed}
+            except Exception:
+                return {"__arg": args}
+        return {}
     
     # Try to create structured tools, fallback to regular tools if needed
     try:
@@ -319,10 +431,22 @@ def get_all_tools():
             args_schema=None
         ),
         StructuredTool.from_function(
+            func=list_running_apps,
+            name="list_running_apps",
+            description="List currently running user-facing applications. Use this BEFORE closing apps to decide what to close.",
+            args_schema=ListRunningAppsInput
+        ),
+        StructuredTool.from_function(
             func=close_processes,
             name="close_processes",
             description="Close specific executable processes. Use this when user wants to close applications or processes. Provide a list of executable names like ['chrome.exe', 'notepad.exe'].",
             args_schema=CloseProcessesInput
+        ),
+        StructuredTool.from_function(
+            func=close_apps_by_names_tool,
+            name="close_apps_by_names",
+            description="Close apps by names (e.g., 'chrome', 'spotify'). Prefer this after listing running apps.",
+            args_schema=CloseAppsByNamesInput
         ),
         StructuredTool.from_function(
             func=store_data,
@@ -361,12 +485,12 @@ def get_all_tools():
         tools = [
             Tool(
                 name="send_email",
-                func=lambda args: send_email(args.get('to', ''), args.get('content', ''), args.get('attachment_path')),
+                func=lambda args: (lambda a=_parse_args(args): send_email(a.get('to', ''), a.get('content', ''), a.get('attachment_path')))(),
                 description="Send an email to a recipient with optional attachment. Input should be dict with 'to', 'content', and optional 'attachment_path'"
             ),
             Tool(
                 name="send_whatsapp",
-                func=lambda args: send_whatsapp(args.get('name', ''), args.get('message', '')),
+                func=lambda args: (lambda a=_parse_args(args): send_whatsapp(a.get('name', ''), a.get('message', '')))(),
                 description="Send a WhatsApp message to a contact. Input should be dict with 'name' and 'message'"
             ),
             Tool(
@@ -386,17 +510,17 @@ def get_all_tools():
             ),
             Tool(
                 name="search_wikipedia",
-                func=search_wikipedia,
+                func=lambda args: (lambda a=_parse_args(args): search_wikipedia(a.get('query', a.get('__arg', ''))))(),
                 description="Search Wikipedia for information about a topic"
             ),
             Tool(
                 name="search_youtube",
-                func=search_youtube,
+                func=lambda args: (lambda a=_parse_args(args): search_youtube(a.get('query', a.get('__arg', ''))))(),
                 description="Search YouTube for videos"
             ),
             Tool(
                 name="search_google",
-                func=search_google,
+                func=lambda args: (lambda a=_parse_args(args): search_google(a.get('query', a.get('__arg', ''))))(),
                 description="Search Google for information"
             ),
             Tool(
@@ -411,7 +535,7 @@ def get_all_tools():
             ),
             Tool(
                 name="open_app",
-                func=open_app,
+                func=lambda args: (lambda a=_parse_args(args): open_app(a.get('app_name', a.get('__arg', ''))))(),
                 description="Open an application using Windows search"
             ),
             Tool(
@@ -420,28 +544,38 @@ def get_all_tools():
                 description="Switch between open windows"
             ),
             Tool(
+                name="list_running_apps",
+                func=lambda args: (lambda a=_parse_args(args): list_running_apps(a.get('include_system', False)))(),
+                description="List currently running user-facing applications"
+            ),
+            Tool(
                 name="close_processes",
-                func=close_processes,
+                func=lambda args: (lambda a=_parse_args(args): close_processes(a.get('exe_list', [])))(),
                 description="Close specific executable processes"
             ),
             Tool(
+                name="close_apps_by_names",
+                func=lambda args: (lambda a=_parse_args(args): close_apps_by_names_tool(**a))(),
+                description="Close apps by friendly names or executable names. Accepts 'names' or 'app_names' as a list."
+            ),
+            Tool(
                 name="store_data",
-                func=store_data,
+                func=lambda args: (lambda a=_parse_args(args): store_data(a.get('key', a.get('__arg', '')), a.get('value', '')))(),
                 description="Store key-value data for later retrieval"
             ),
             Tool(
                 name="retrieve_data",
-                func=retrieve_data,
+                func=lambda args: (lambda a=_parse_args(args): retrieve_data(a.get('key', a.get('__arg', ''))))(),
                 description="Retrieve stored data by key"
             ),
             Tool(
                 name="save_note",
-                func=save_note,
+                func=lambda args: (lambda a=_parse_args(args): save_note(a.get('text', a.get('__arg', '')), a.get('file_path')))(),
                 description="Save a note or text to a file"
             ),
             Tool(
                 name="upload_image_to_lens",
-                func=upload_image_to_lens,
+                func=lambda args: (lambda a=_parse_args(args): upload_image_to_lens(a.get('image_path', a.get('__arg', ''))))(),
                 description="Upload an image to Google Lens for visual search"
             ),
             Tool(

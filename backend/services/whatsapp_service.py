@@ -60,12 +60,6 @@ class WhatsAppService:
             # Try to ensure focus and send using Enter with retries
             retries = max(1, int(self.whatsapp_enter_retries))
             for i in range(retries):
-                try:
-                    # Try to bring the browser/WhatsApp tab to foreground with Alt+Tab
-                    pyautogui.hotkey('alt', 'tab')
-                    time.sleep(0.6)
-                except Exception:
-                    pass
                 # Click near the bottom center to focus input (best effort)
                 try:
                     width, height = pyautogui.size()

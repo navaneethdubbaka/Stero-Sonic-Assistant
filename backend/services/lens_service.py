@@ -1,9 +1,10 @@
 import os
 import time
+import webbrowser
 import pyautogui
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options as ChromeOptions
 from webdriver_manager.chrome import ChromeDriverManager
 from typing import Optional
 
@@ -16,7 +17,11 @@ class LensService:
         start_time = time.time()
         
         while True:
-            location = pyautogui.locateOnScreen(image_path, confidence=confidence)
+            # Some environments lack OpenCV; confidence arg would fail there. Fallback gracefully.
+            try:
+                location = pyautogui.locateOnScreen(image_path, confidence=confidence)
+            except TypeError:
+                location = pyautogui.locateOnScreen(image_path)
             
             if location is not None:
                 center = pyautogui.center(location)
@@ -29,84 +34,95 @@ class LensService:
             time.sleep(0.5)
     
     def upload_image_to_lens(self, image_path: str) -> dict:
-        """Upload image to Google Lens"""
+        """Upload image to Google Lens with robust fallbacks (Selenium → browser + GUI)."""
         try:
-            # Ensure absolute path
             abs_image_path = os.path.abspath(image_path)
             if not os.path.exists(abs_image_path):
                 return {"success": False, "error": f"Image file not found: {abs_image_path}"}
-            
-            chrome_options = Options()
-            chrome_options.add_experimental_option("detach", True)
-            # Try to find Chrome in common locations
+
+            # 1) Try Selenium-driven Chrome first
+            driver = None
             try:
-                service = Service(ChromeDriverManager().install())
+                chrome_options = ChromeOptions()
+                chrome_options.add_experimental_option("detach", True)
+                # Optional: reduce automation banners
+                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"]) 
+                chrome_options.add_experimental_option('useAutomationExtension', False)
+
+                service = ChromeService(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
-            except Exception as e:
-                return {"success": False, "error": f"Failed to initialize Chrome driver: {str(e)}"}
-            
-            try:
-                driver.get("https://lens.google.com/")
-                time.sleep(3)
-                
-                # Try to find and click the upload button using Selenium
-                try:
-                    # Look for file input element
-                    from selenium.webdriver.common.by import By
-                    from selenium.webdriver.support.ui import WebDriverWait
-                    from selenium.webdriver.support import expected_conditions as EC
-                    
-                    # Wait for page to load
-                    WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+
+                from selenium.webdriver.common.by import By
+                from selenium.webdriver.support.ui import WebDriverWait
+                from selenium.webdriver.support import expected_conditions as EC
+
+                # Prefer direct upload endpoint if available
+                driver.get("https://lens.google.com/upload")
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+                # Try multiple selectors for file input
+                selectors = [
+                    'input[type="file"]',
+                    'input[type=file]',
+                    'input[type="file"][accept*="image"]',
+                ]
+                file_input = None
+                for css in selectors:
+                    try:
+                        file_input = driver.find_element(By.CSS_SELECTOR, css)
+                        if file_input:
+                            break
+                    except Exception:
+                        continue
+
+                if file_input is None:
+                    # Some pages build input dynamically; inject one and use it
+                    driver.execute_script(
+                        """
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = 'image/*';
+                        input.style.display = 'block';
+                        document.body.appendChild(input);
+                        """
                     )
-                    
-                    # Try multiple methods to upload
-                    # Method 1: Find file input directly
+                    file_input = driver.find_element(By.CSS_SELECTOR, 'input[type="file"]')
+
+                file_input.send_keys(abs_image_path)
+                # Give Lens time to process upload
+                time.sleep(5)
+                return {"success": True, "message": f"Image uploaded to Google Lens successfully. Path: {abs_image_path}"}
+
+            except Exception as e:
+                # Fall through to non-Selenium path
+                if driver is not None:
                     try:
-                        file_input = driver.find_element(By.CSS_SELECTOR, 'input[type="file"]')
-                        file_input.send_keys(abs_image_path)
-                        time.sleep(5)
-                        return {"success": True, "message": f"Image uploaded to Google Lens successfully. Path: {abs_image_path}"}
-                    except:
+                        # Keep browser open for user; do not quit
                         pass
-                    
-                    # Method 2: Try clicking upload area and using pyautogui
-                    try:
-                        # Click on the upload area
-                        upload_area = driver.find_element(By.CSS_SELECTOR, '[data-testid="upload-area"], button, .upload-area')
-                        driver.execute_script("arguments[0].click();", upload_area)
-                        time.sleep(2)
-                        
-                        # Use pyautogui to type file path
-                        pyautogui.write(abs_image_path)
-                        time.sleep(1)
-                        pyautogui.press('enter')
-                        time.sleep(5)
-                        return {"success": True, "message": f"Image uploaded to Google Lens successfully. Path: {abs_image_path}"}
-                    except:
+                    except Exception:
                         pass
-                    
-                    # Method 3: Fallback to image recognition if button image exists
-                    if os.path.exists(self.button_image_path):
-                        if self.find_and_click_image(self.button_image_path):
-                            time.sleep(2)
-                            pyautogui.write(abs_image_path)
-                            time.sleep(1)
-                            pyautogui.press('enter')
-                            time.sleep(5)
-                            return {"success": True, "message": f"Image uploaded to Google Lens successfully. Path: {abs_image_path}"}
-                    
-                    return {"success": False, "error": "Could not find upload button on Google Lens page"}
-                    
-                except Exception as e:
-                    return {"success": False, "error": f"Failed to upload image: {str(e)}"}
-                    
-            finally:
-                # Don't close the browser immediately - let user see results
-                # driver.quit()  # Commented out to keep browser open
-                pass
-                
+
+            # 2) Fallback: open default browser and use GUI automation
+            try:
+                webbrowser.open("https://lens.google.com/upload")
+                # Allow browser to load
+                time.sleep(4)
+
+                # Try to focus the OS file dialog by sending Enter if upload button auto-opens dialog
+                # Otherwise try clicking a known upload area image if provided
+                if os.path.exists(self.button_image_path):
+                    self.find_and_click_image(self.button_image_path)
+                    time.sleep(1.5)
+
+                # Type the absolute path and press Enter
+                pyautogui.write(abs_image_path)
+                time.sleep(0.8)
+                pyautogui.press('enter')
+                time.sleep(5)
+                return {"success": True, "message": f"Image uploaded to Google Lens successfully. Path: {abs_image_path}"}
+            except Exception as e:
+                return {"success": False, "error": f"Failed to open browser or interact with file dialog: {str(e)}"}
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 

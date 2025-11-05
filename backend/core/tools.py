@@ -12,7 +12,10 @@ from pydantic import BaseModel, Field, root_validator
 from typing import Optional, List
 import json
 import sys
+import os
 from pathlib import Path
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.schema import HumanMessage
 
 # Add services to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -412,6 +415,115 @@ def scan_camera_with_lens(*args, **kwargs) -> str:
     return f"Failed to capture camera image: {camera_result.get('error', 'Unknown error')}"
 
 
+def analyze_image_with_vision(image_path: str, user_prompt: Optional[str] = None) -> str:
+    """Analyze an image using Gemini vision capabilities"""
+    try:
+        # Check if image exists
+        abs_image_path = os.path.abspath(image_path)
+        if not os.path.exists(abs_image_path):
+            return f"Error: Image file not found at {abs_image_path}"
+        
+        # Get API key
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return "Error: GEMINI_API_KEY not found in environment variables"
+        
+        # Initialize Gemini vision model
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0.7,
+            google_api_key=api_key
+        )
+        
+        # Create prompt
+        prompt_text = user_prompt or "Please analyze this image and describe what you see. Provide a detailed explanation of the contents, objects, text, and any other relevant information."
+        
+        # Read and encode image as base64
+        import base64
+        
+        # Read and encode image
+        with open(abs_image_path, "rb") as image_file:
+            image_data = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Determine MIME type
+        _, ext = os.path.splitext(abs_image_path)
+        mime_type = "image/png" if ext.lower() == ".png" else "image/jpeg"
+        
+        # Create message with image using LangChain's format
+        # For ChatGoogleGenerativeAI with vision, we need to use the correct format
+        # LangChain Google Generative AI supports images via file paths or base64
+        try:
+            # Method 1: Use file path directly (simplest approach)
+            # LangChain's ChatGoogleGenerativeAI can handle file paths for images
+            message = HumanMessage(
+                content=[
+                    {
+                        "type": "text",
+                        "text": prompt_text
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": abs_image_path
+                    }
+                ]
+            )
+            response = llm.invoke([message])
+            return response.content
+        except Exception as e1:
+            # Fallback: try with base64 data URI format
+            try:
+                message = HumanMessage(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": prompt_text
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": f"data:{mime_type};base64,{image_data}"
+                        }
+                    ]
+                )
+                response = llm.invoke([message])
+                return response.content
+            except Exception as e2:
+                # Final fallback: use simple content list format
+                try:
+                    # Some LangChain versions accept simple format
+                    message = HumanMessage(content=[prompt_text, abs_image_path])
+                    response = llm.invoke([message])
+                    return response.content
+                except Exception as e3:
+                    return f"Error analyzing image with vision. Errors: {str(e1)}, {str(e2)}, {str(e3)}"
+                    
+    except Exception as e:
+        return f"Error analyzing image with vision: {str(e)}"
+
+
+def analyze_screen_with_vision(*args, **kwargs) -> str:
+    """Take a screenshot and analyze it using Gemini vision"""
+    # Take screenshot
+    screenshot_result = screenshot_service.take_screenshot()
+    if screenshot_result.get("success"):
+        path = screenshot_result.get("path")
+        # Analyze with Gemini vision
+        analysis_result = analyze_image_with_vision(path)
+        return f"Screenshot captured and analyzed. Path: {path}\n\nAnalysis:\n{analysis_result}"
+    return f"Failed to capture screenshot: {screenshot_result.get('error', 'Unknown error')}"
+
+
+def analyze_camera_with_vision(*args, **kwargs) -> str:
+    """Capture an image from the camera and analyze it using Gemini vision"""
+    # Capture image from camera
+    camera_result = camera_service.capture_image()
+    if camera_result.get("success"):
+        path = camera_result.get("path")
+        # Analyze with Gemini vision
+        analysis_result = analyze_image_with_vision(path)
+        return f"Camera image captured and analyzed. Path: {path}\n\nAnalysis:\n{analysis_result}"
+    return f"Failed to capture camera image: {camera_result.get('error', 'Unknown error')}"
+
+
 # Create Langchain tools
 def get_all_tools():
     """Get all available tools for the agent"""
@@ -558,6 +670,18 @@ def get_all_tools():
             description="Capture an image from the camera and upload it to Google Lens for visual search. Use this when user wants to take a photo with the camera and search it with Google Lens.",
             args_schema=None
         ),
+        StructuredTool.from_function(
+            func=analyze_screen_with_vision,
+            name="analyze_screen_with_vision",
+            description="Take a screenshot and analyze it using Gemini vision AI. Use this when user wants to understand or analyze what's on their screen using AI vision.",
+            args_schema=None
+        ),
+        StructuredTool.from_function(
+            func=analyze_camera_with_vision,
+            name="analyze_camera_with_vision",
+            description="Capture an image from the camera and analyze it using Gemini vision AI. Use this when user wants to take a photo and understand or analyze it using AI vision.",
+            args_schema=None
+        ),
         ]
     except Exception as e:
         print(f"Warning: Could not create StructuredTools, using regular Tools: {e}")
@@ -667,6 +791,16 @@ def get_all_tools():
                 name="scan_camera_with_lens",
                 func=scan_camera_with_lens,
                 description="Capture an image from the camera and upload it to Google Lens for visual search"
+            ),
+            Tool(
+                name="analyze_screen_with_vision",
+                func=analyze_screen_with_vision,
+                description="Take a screenshot and analyze it using Gemini vision AI"
+            ),
+            Tool(
+                name="analyze_camera_with_vision",
+                func=analyze_camera_with_vision,
+                description="Capture an image from the camera and analyze it using Gemini vision AI"
             ),
         ]
     

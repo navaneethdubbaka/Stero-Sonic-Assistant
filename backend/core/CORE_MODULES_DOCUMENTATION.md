@@ -518,6 +518,54 @@ Each tool follows this pattern:
   2. Uploads screenshot to Lens via `LensService`
 - **Returns**: Combined success message or error
 
+**`scan_camera_with_lens`**
+- **Purpose**: Capture camera image and upload to Google Lens for visual search
+- **Input**: None
+- **Implementation**:
+  1. Captures image from camera via `CameraService`
+  2. Uploads captured image to Lens via `LensService`
+- **Returns**: Combined success message or error
+
+##### 9. Vision Analysis Tools
+
+**`analyze_image_with_vision`** (Helper Function)
+- **Purpose**: Core function that analyzes images using Gemini vision capabilities
+- **Parameters**:
+  - `image_path` (str): Path to image file
+  - `user_prompt` (Optional[str]): Custom analysis prompt (default: general analysis)
+- **Implementation**:
+  1. Validates image file exists
+  2. Reads and encodes image as base64
+  3. Initializes Gemini vision model (`gemini-2.5-flash`)
+  4. Creates message with text prompt and image
+  5. Invokes LLM with multiple format fallbacks:
+     - File path format
+     - Base64 data URI format
+     - Simple content list format
+  6. Returns detailed analysis response
+- **Returns**: Detailed text analysis of image contents
+- **Error Handling**: Multiple fallback formats for compatibility
+
+**`analyze_screen_with_vision`**
+- **Purpose**: Take screenshot and analyze it using Gemini vision AI
+- **Input**: None
+- **Implementation**:
+  1. Takes screenshot via `ScreenshotService`
+  2. Calls `analyze_image_with_vision()` with screenshot path
+  3. Returns combined capture and analysis results
+- **Returns**: Screenshot path and detailed AI analysis
+- **Use Case**: Understanding screen contents, reading text, identifying objects on screen
+
+**`analyze_camera_with_vision`**
+- **Purpose**: Capture camera image and analyze it using Gemini vision AI
+- **Input**: None
+- **Implementation**:
+  1. Captures image from camera via `CameraService`
+  2. Calls `analyze_image_with_vision()` with camera image path
+  3. Returns combined capture and analysis results
+- **Returns**: Camera image path and detailed AI analysis
+- **Use Case**: Understanding real-world objects, reading text from physical documents, analyzing scenes
+
 ### Input Schema Classes
 
 All input schemas inherit from `pydantic.BaseModel` with:
@@ -590,10 +638,13 @@ These are singleton instances used by all tool functions.
 
 ### Dependencies
 - `langchain.tools.Tool, StructuredTool`: Tool definitions
+- `langchain_google_genai.ChatGoogleGenerativeAI`: Gemini vision capabilities
+- `langchain.schema.HumanMessage`: Message formatting for vision
 - `pydantic.BaseModel, Field, root_validator`: Input validation
 - `typing.Optional, List`: Type hints
 - `json`: JSON parsing for flexible inputs
-- `sys, pathlib.Path`: Path manipulation
+- `sys, pathlib.Path, os`: Path manipulation
+- `base64`: Image encoding for vision API
 - All service modules from `services` package
 
 ### Tool Usage Patterns
@@ -620,6 +671,19 @@ All tools follow consistent error handling:
 2. Check `result.get("success")`
 3. Return user-friendly success message
 4. Return error message with details if failed
+
+### Vision Tools Comparison
+
+| Tool | Source | Destination | Purpose | Use Case |
+|------|--------|-------------|---------|----------|
+| `scan_screen_with_lens` | Screenshot | Google Lens | Visual search | Find similar images, products, text |
+| `scan_camera_with_lens` | Camera | Google Lens | Visual search | Search real-world objects |
+| `analyze_screen_with_vision` | Screenshot | Gemini AI | AI analysis | Understand screen contents, read text |
+| `analyze_camera_with_vision` | Camera | Gemini AI | AI analysis | Understand real-world scenes, read documents |
+
+**Key Differences:**
+- **Google Lens**: Better for finding similar images, products, and visual search
+- **Gemini Vision**: Better for understanding content, reading text, and detailed analysis
 
 ### Example Tool Definition
 
@@ -1223,7 +1287,7 @@ The `core` module provides the foundational intelligence and functionality for t
 
 1. **chatbot.py**: Basic conversational AI without tools
 2. **chatbot_with_tools.py**: Advanced AI with tool execution capabilities
-3. **tools.py**: Comprehensive tool definitions for system interaction
+3. **tools.py**: Comprehensive tool definitions for system interaction (22 tools including vision capabilities)
 4. **data_analyzer.py**: Specialized DataFrame analysis using LLM
 5. **intent_parser.py**: Natural language intent recognition
 6. **speech.py**: Text-to-speech functionality
@@ -1234,6 +1298,8 @@ Together, these modules create a powerful AI assistant capable of:
 - Analyzing data
 - Providing voice feedback
 - Maintaining conversation context
+- **Vision capabilities**: Analyzing images from camera and screen using Gemini AI
+- **Visual search**: Searching images using Google Lens
 
 ---
 

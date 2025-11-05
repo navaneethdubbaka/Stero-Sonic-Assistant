@@ -9,7 +9,7 @@ The Stereo Sonic Assistant now uses Langchain tools to enable the LLM to automat
 ### Tools System
 - **Location**: `backend/core/tools.py`
 - **Purpose**: Defines all available Langchain tools that wrap service functions
-- **Count**: 19 tools covering all major services
+- **Count**: 22 tools covering all major services
 
 ### Enhanced Chatbot
 - **Location**: `backend/core/chatbot_with_tools.py`
@@ -31,26 +31,31 @@ The Stereo Sonic Assistant now uses Langchain tools to enable the LLM to automat
 4. **take_screenshot** - Take screenshot of screen
 5. **upload_image_to_lens** - Upload image to Google Lens
 6. **scan_screen_with_lens** - Take screenshot and upload to Google Lens
+7. **scan_camera_with_lens** - Capture camera image and upload to Google Lens
+8. **analyze_screen_with_vision** - Take screenshot and analyze with Gemini vision AI
+9. **analyze_camera_with_vision** - Capture camera image and analyze with Gemini vision AI
 
 ### System Tools
-7. **get_current_time** - Get current time
-8. **open_app** - Open Windows application
-9. **switch_windows** - Switch between windows
-10. **close_processes** - Close specific processes
+10. **get_current_time** - Get current time
+11. **open_app** - Open Windows application
+12. **switch_windows** - Switch between windows
+13. **close_processes** - Close specific processes
+14. **close_apps_by_names** - Close apps by friendly names
+15. **list_running_apps** - List running applications
 
 ### Search Tools
-11. **search_wikipedia** - Search Wikipedia
-12. **search_youtube** - Search YouTube
-13. **search_google** - Search Google
-14. **open_stackoverflow** - Open StackOverflow
+16. **search_wikipedia** - Search Wikipedia
+17. **search_youtube** - Search YouTube
+18. **search_google** - Search Google
+19. **open_stackoverflow** - Open StackOverflow
 
 ### Data Tools
-15. **store_data** - Store key-value data
-16. **retrieve_data** - Retrieve stored data
-17. **save_note** - Save note to file
+20. **store_data** - Store key-value data
+21. **retrieve_data** - Retrieve stored data
+22. **save_note** - Save note to file
 
 ### Media Control
-18. **play_music** - Play music from directory
+23. **play_music** - Play music from directory
 
 ## How It Works
 
@@ -93,6 +98,20 @@ Agent:
   1. Uses take_screenshot tool
   2. Uses upload_image_to_lens tool with screenshot path
 Result: "Screenshot taken and uploaded to Google Lens"
+```
+
+#### Example 4: Vision Analysis
+```
+User: "Analyze what's on my screen"
+Agent: Uses analyze_screen_with_vision tool
+Result: "Screenshot captured and analyzed. Analysis: [detailed description of screen contents]"
+```
+
+#### Example 5: Camera Vision
+```
+User: "Take a photo and tell me what you see"
+Agent: Uses analyze_camera_with_vision tool
+Result: "Camera image captured and analyzed. Analysis: [detailed description of image contents]"
 ```
 
 ## API Usage

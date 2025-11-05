@@ -399,6 +399,19 @@ def scan_screen_with_lens(*args, **kwargs) -> str:
     return f"Failed to capture screenshot: {screenshot_result.get('error', 'Unknown error')}"
 
 
+def scan_camera_with_lens(*args, **kwargs) -> str:
+    """Capture an image from the camera and upload it to Google Lens for visual search"""
+    # Capture image from camera
+    camera_result = camera_service.capture_image()
+    if camera_result.get("success"):
+        path = camera_result.get("path")
+        lens_result = lens_service.upload_image_to_lens(path)
+        if lens_result.get("success"):
+            return f"Camera image captured and uploaded to Google Lens successfully. Path: {path}"
+        return f"Camera image captured at {path}, but failed to upload to Lens: {lens_result.get('error', 'Unknown error')}"
+    return f"Failed to capture camera image: {camera_result.get('error', 'Unknown error')}"
+
+
 # Create Langchain tools
 def get_all_tools():
     """Get all available tools for the agent"""
@@ -539,6 +552,12 @@ def get_all_tools():
             description="Take a screenshot and upload it to Google Lens. Use this when user wants to scan the screen with Google Lens.",
             args_schema=None
         ),
+        StructuredTool.from_function(
+            func=scan_camera_with_lens,
+            name="scan_camera_with_lens",
+            description="Capture an image from the camera and upload it to Google Lens for visual search. Use this when user wants to take a photo with the camera and search it with Google Lens.",
+            args_schema=None
+        ),
         ]
     except Exception as e:
         print(f"Warning: Could not create StructuredTools, using regular Tools: {e}")
@@ -643,6 +662,11 @@ def get_all_tools():
                 name="scan_screen_with_lens",
                 func=scan_screen_with_lens,
                 description="Take a screenshot and upload it to Google Lens"
+            ),
+            Tool(
+                name="scan_camera_with_lens",
+                func=scan_camera_with_lens,
+                description="Capture an image from the camera and upload it to Google Lens for visual search"
             ),
         ]
     

@@ -32,9 +32,10 @@ def create_llm_for_tools(provider: Optional[str] = None):
         
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         return ChatOpenAI(
-            model=model,
+            model_name=model,
             temperature=0.7,
-            openai_api_key=api_key
+            openai_api_key=api_key,
+            model_kwargs={}
         )
     else:  # Default to Gemini
         from langchain_google_genai import ChatGoogleGenerativeAI

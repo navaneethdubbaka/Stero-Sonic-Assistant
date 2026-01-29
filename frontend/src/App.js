@@ -4,11 +4,13 @@ import VoiceInterface from './components/VoiceInterface';
 import CommandHistory from './components/CommandHistory';
 import StatusBar from './components/StatusBar';
 import ReasoningDisplay from './components/ReasoningDisplay';
+import Reminders from './components/Reminders';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 const WAKE_WORD = 'sonic';
 
 function App() {
+  const [activeTab, setActiveTab] = useState('chat'); // 'chat' or 'reminders'
   const [listeningState, setListeningState] = useState('waiting'); // 'waiting', 'wake-word', 'command', 'processing'
   const [history, setHistory] = useState([]);
   const [status, setStatus] = useState({ message: 'Say "Sonic" to activate', type: 'info' });
@@ -276,20 +278,46 @@ function App() {
       <div className="app-container">
         <StatusBar status={status} />
         
+        {/* Tab Navigation */}
+        <div className="tab-navigation">
+          <button 
+            className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            💬 Chat
+          </button>
+          <button 
+            className={`tab-btn ${activeTab === 'reminders' ? 'active' : ''}`}
+            onClick={() => setActiveTab('reminders')}
+          >
+            📝 Reminders
+          </button>
+        </div>
+        
         <div className="main-content">
-          <VoiceInterface
-            isListening={isListening}
-            listeningState={listeningState}
-            onStartListening={startListening}
-            onStopListening={stopListening}
-          />
+          {/* Chat Tab */}
+          {activeTab === 'chat' && (
+            <>
+              <VoiceInterface
+                isListening={isListening}
+                listeningState={listeningState}
+                onStartListening={startListening}
+                onStopListening={stopListening}
+              />
+              
+              <CommandHistory history={history} />
+              
+              <ReasoningDisplay 
+                reasoning={reasoning} 
+                isProcessing={listeningState === 'processing'} 
+              />
+            </>
+          )}
           
-          <CommandHistory history={history} />
-          
-          <ReasoningDisplay 
-            reasoning={reasoning} 
-            isProcessing={listeningState === 'processing'} 
-          />
+          {/* Reminders Tab */}
+          {activeTab === 'reminders' && (
+            <Reminders />
+          )}
         </div>
       </div>
     </div>

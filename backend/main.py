@@ -11,10 +11,10 @@ load_dotenv()
 
 # Import routers
 try:
-    from backend.api import voice, commands, chatbot, system
+    from backend.api import voice, commands, chatbot, system, reminders
 except ImportError:
     # When running from backend directory
-    from api import voice, commands, chatbot, system
+    from api import voice, commands, chatbot, system, reminders
 
 app = FastAPI(title="Stereo Sonic Assistant API", version="1.0.0")
 
@@ -32,6 +32,7 @@ app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 app.include_router(commands.router, prefix="/api/commands", tags=["Commands"])
 app.include_router(chatbot.router, prefix="/api/chatbot", tags=["Chatbot"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
+app.include_router(reminders.router, prefix="/api/reminders", tags=["Reminders"])
 
 @app.get("/")
 async def root():

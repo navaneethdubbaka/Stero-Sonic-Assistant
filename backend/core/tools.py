@@ -28,6 +28,8 @@ from services.system_service import SystemService
 from services.data_service import DataService
 from services.lens_service import LensService
 from services.notification_service import NotificationService
+from services.reminder_service import get_reminder_service
+from services.spotify_service import get_spotify_service
 
 # Initialize services
 email_service = EmailService()
@@ -38,6 +40,10 @@ system_service = SystemService()
 data_service = DataService()
 lens_service = LensService()
 notification_service = NotificationService()
+reminder_service = get_reminder_service()
+
+# Initialize Spotify service with play button template image
+spotify_service = get_spotify_service(play_button_image_path=r"E:\Stero Sonic Assistant\spotify_play.png")
 
 # Start notification monitoring on initialization
 notification_service.start_monitoring()
@@ -251,12 +257,51 @@ def open_stackoverflow(*args, **kwargs) -> str:
     return f"Failed to open StackOverflow: {result.get('error', 'Unknown error')}"
 
 
-def play_music(*args, **kwargs) -> str:
-    """Play music from the music directory"""
-    result = system_service.play_music()
-    if result.get("success"):
-        return f"Playing music: {result.get('song', 'Unknown song')}"
-    return f"Failed to play music: {result.get('error', 'Unknown error')}"
+def play_music(song_name: str = "", artist: str = "", platform: str = "spotify") -> str:
+    """
+    Play music - either search on Spotify or play from local directory
+    
+    Args:
+        song_name: Name of song to search and play (optional). If not provided, plays local music.
+        artist: Artist name for better search results (optional)
+        platform: Music platform to use (default: "spotify", can also be "local")
+    
+    Returns:
+        Status message
+    
+    Examples:
+        - "play Apna Bana Le" → song_name="Apna Bana Le", platform="spotify"
+        - "play Shape of You by Ed Sheeran" → song_name="Shape of You", artist="Ed Sheeran"
+        - "play music" → Uses local music directory
+    """
+    # If song name is provided, search and play on specified platform
+    if song_name and song_name.strip():
+        if platform.lower() == "local":
+            # Play from local directory
+            result = system_service.play_music()
+            if result.get("success"):
+                return f"Playing music: {result.get('song', 'Unknown song')}"
+            return f"Failed to play music: {result.get('error', 'Unknown error')}"
+        else:
+            # Search and play on Spotify (default)
+            try:
+                if artist and artist.strip():
+                    result = spotify_service.play_song_directly(song_name, artist=artist)
+                else:
+                    result = spotify_service.search_and_play(song_name)
+                
+                if result.get("success"):
+                    return result.get("message", f"Playing '{song_name}' on Spotify")
+                else:
+                    return f"Failed to play song: {result.get('error', 'Unknown error')}"
+            except Exception as e:
+                return f"Error playing song: {str(e)}"
+    else:
+        # No song specified, play local music
+        result = system_service.play_music()
+        if result.get("success"):
+            return f"Playing music: {result.get('song', 'Unknown song')}"
+        return f"Failed to play music: {result.get('error', 'Unknown error')}"
 
 
 def open_app(app_name: str) -> str:
@@ -623,6 +668,165 @@ def get_notifications_by_app(app_name: str, limit: Optional[int] = 10) -> str:
     return f"Failed to get notifications from {app_name}: {result.get('error', 'Unknown error')}"
 
 
+# Reminder tool functions
+def create_reminder(title: str, description: str = "", due_date: str = "", priority: str = "medium") -> str:
+    """
+    Create a new reminder/task with optional due date
+    
+    Args:
+        title: Title or summary of the reminder (e.g., "call mom", "buy groceries")
+        description: Detailed description (optional)
+        due_date: REQUIRED if user mentions time! Due date/time in natural language like:
+                  "in 5 minutes", "in 2 hours", "tomorrow at 3pm", "today at 5pm", 
+                  "next Monday", "at 8pm". Leave empty only if no time is mentioned.
+        priority: Priority level - low, medium, or high (default: medium)
+    
+    Returns:
+        Confirmation message
+    
+    IMPORTANT: When user says "remind me to X in Y time" or "remind me to X at Y time",
+    you MUST extract and pass the time part (e.g., "in 5 minutes", "at 3pm") to the due_date parameter!
+    
+    Examples:
+    - "remind me to call mom in 5 minutes" → title="call mom", due_date="in 5 minutes"
+    - "remind me to take medicine at 8pm" → title="take medicine", due_date="at 8pm"
+    - "remind me tomorrow to buy milk" → title="buy milk", due_date="tomorrow"
+    - "add reminder to exercise" → title="exercise", due_date="" (no time mentioned)
+    """
+    try:
+        # If no due_date provided, try to extract from title
+        if not due_date and title:
+            import re
+            # Look for time expressions in the title
+            time_patterns = [
+                r'in\s+\d+\s+(minute|minutes|min|hour|hours|hr|day|days)',
+                r'at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?',
+                r'tomorrow(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?',
+                r'today(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?',
+                r'next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
+                r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)'
+            ]
+            
+            for pattern in time_patterns:
+                match = re.search(pattern, title.lower())
+                if match:
+                    due_date = match.group(0)
+                    # Remove the time part from title
+                    title = re.sub(r'\s*' + re.escape(match.group(0)) + r'\s*', ' ', title, flags=re.IGNORECASE).strip()
+                    break
+        
+        reminder = reminder_service.create_reminder(
+            title=title,
+            description=description or "",
+            due_date=due_date or None,
+            priority=priority or "medium"
+        )
+        
+        msg = f"Reminder created: '{title}'"
+        if due_date:
+            msg += f" (Due: {due_date})"
+        if priority and priority.lower() != "medium":
+            msg += f" [Priority: {priority.upper()}]"
+        
+        return msg
+    except Exception as e:
+        return f"Failed to create reminder: {str(e)}"
+
+
+def get_reminders_list(include_completed: bool = False) -> str:
+    """Get all reminders/tasks"""
+    try:
+        reminders = reminder_service.get_reminders(include_completed=include_completed)
+        
+        if not reminders:
+            return "No reminders found"
+        
+        lines = [f"Found {len(reminders)} reminder(s):"]
+        for r in reminders:
+            status = "✓" if r.get("completed") else "○"
+            title = r.get("title", "No title")
+            priority = r.get("priority", "medium")
+            priority_mark = {"high": "!", "medium": "", "low": "-"}.get(priority, "")
+            
+            line = f"{status} {title}{priority_mark}"
+            
+            if r.get("due_date"):
+                line += f" (Due: {r.get('due_date')})"
+            
+            if r.get("description"):
+                line += f" - {r.get('description')}"
+            
+            lines.append(line)
+        
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Failed to get reminders: {str(e)}"
+
+
+def mark_reminder_done(reminder_id: str) -> str:
+    """Mark a reminder as completed"""
+    try:
+        reminder = reminder_service.mark_completed(reminder_id)
+        if reminder:
+            return f"Marked reminder '{reminder.get('title')}' as completed"
+        return "Reminder not found"
+    except Exception as e:
+        return f"Failed to mark reminder as done: {str(e)}"
+
+
+# Spotify tool functions
+def play_song_on_spotify(song_query: str, artist: str = "") -> str:
+    """
+    Search and play a song on Spotify
+    
+    Args:
+        song_query: Song name or search query (e.g., "Apna Bana Le", "Shape of You")
+        artist: Optional artist name for better results (e.g., "Ed Sheeran")
+    
+    Returns:
+        Status message
+    
+    Examples:
+        - "play Apna Bana Le on Spotify" → song_query="Apna Bana Le"
+        - "play Shape of You by Ed Sheeran" → song_query="Shape of You", artist="Ed Sheeran"
+        - "search for Coldplay songs on Spotify" → song_query="Coldplay"
+    """
+    try:
+        if artist and artist.strip():
+            result = spotify_service.play_song_directly(song_query, artist=artist)
+        else:
+            result = spotify_service.search_and_play(song_query)
+        
+        if result.get("success"):
+            return result.get("message", f"Playing '{song_query}' on Spotify")
+        else:
+            return f"Failed to play song: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error playing song on Spotify: {str(e)}"
+
+
+def search_music(query: str, platform: str = "spotify") -> str:
+    """
+    Search for music on a streaming platform
+    
+    Args:
+        query: Search query (song name, artist, album, etc.)
+        platform: Music platform (default: spotify)
+    
+    Returns:
+        Status message
+    """
+    try:
+        result = spotify_service.search_and_play(query, platform=platform)
+        
+        if result.get("success"):
+            return result.get("message", f"Searching for '{query}' on {platform}")
+        else:
+            return f"Failed to search: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error searching music: {str(e)}"
+
+
 # Create Langchain tools
 def get_all_tools():
     """Get all available tools for the agent"""
@@ -851,8 +1055,12 @@ def get_all_tools():
             ),
             Tool(
                 name="play_music",
-                func=play_music,
-                description="Play music from the music directory"
+                func=lambda args: (lambda a=_parse_args(args): play_music(
+                    a.get('song_name', a.get('__arg', '')),
+                    a.get('artist', ''),
+                    a.get('platform', 'spotify')
+                ))(),
+                description="Play music on Spotify or locally. IMPORTANT: Extract song name and artist from user's request! Examples: 'play Apna Bana Le' → song_name='Apna Bana Le'; 'play Shape of You by Ed Sheeran' → song_name='Shape of You', artist='Ed Sheeran'. If no song specified, plays local music."
             ),
             Tool(
                 name="open_app",
@@ -933,6 +1141,42 @@ def get_all_tools():
                 name="get_notifications_by_app",
                 func=lambda args: (lambda a=_parse_args(args): get_notifications_by_app(a.get('app_name', ''), a.get('limit', 10)))(),
                 description="Get notifications filtered by application name"
+            ),
+            Tool(
+                name="create_reminder",
+                func=lambda args: (lambda a=_parse_args(args): create_reminder(
+                    a.get('title', a.get('__arg', '')),
+                    a.get('description', ''),
+                    a.get('due_date', ''),
+                    a.get('priority', 'medium')
+                ))(),
+                description="Create a new reminder or task with optional due time. IMPORTANT: When user mentions time (like 'in 5 minutes', 'at 3pm', 'tomorrow'), pass it to 'due_date' parameter! Examples: 'remind me to call in 5 minutes' → title='call', due_date='in 5 minutes'. Use for: 'remind me to...', 'add reminder', 'create task', etc."
+            ),
+            Tool(
+                name="get_reminders",
+                func=lambda args: (lambda a=_parse_args(args): get_reminders_list(a.get('include_completed', False)))(),
+                description="Get all reminders/tasks. Use for: 'show my reminders', 'what are my tasks', 'list reminders', etc."
+            ),
+            Tool(
+                name="mark_reminder_done",
+                func=lambda args: (lambda a=_parse_args(args): mark_reminder_done(a.get('reminder_id', a.get('__arg', ''))))(),
+                description="Mark a reminder as completed"
+            ),
+            Tool(
+                name="play_song_on_spotify",
+                func=lambda args: (lambda a=_parse_args(args): play_song_on_spotify(
+                    a.get('song_query', a.get('__arg', '')),
+                    a.get('artist', '')
+                ))(),
+                description="Search and play a specific song on Spotify. Extract song name and optionally artist. Examples: 'play Apna Bana Le on Spotify' → song_query='Apna Bana Le'; 'play Levitating by Dua Lipa' → song_query='Levitating', artist='Dua Lipa'"
+            ),
+            Tool(
+                name="search_music",
+                func=lambda args: (lambda a=_parse_args(args): search_music(
+                    a.get('query', a.get('__arg', '')),
+                    a.get('platform', 'spotify')
+                ))(),
+                description="Search for music on Spotify. Use for queries like 'search for Coldplay', 'find songs by Taylor Swift'"
             ),
         ]
     

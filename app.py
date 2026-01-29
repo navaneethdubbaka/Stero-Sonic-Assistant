@@ -29,6 +29,8 @@ FRONTEND_INDEX = FRONTEND_BUILD_PATH / "index.html"
 
 # Wake word detector instance
 _wake_word_detector = None
+# Reminder scheduler instance
+_reminder_scheduler = None
 
 def start_server():
     """Start FastAPI server in a separate thread"""
@@ -52,6 +54,26 @@ def start_wake_word_detection():
     except Exception as e:
         print(f"[!] Failed to start wake word detection: {e}")
 
+def start_reminder_scheduler():
+    """Start reminder scheduler in background"""
+    global _reminder_scheduler
+    try:
+        from backend.services.reminder_scheduler import start_reminder_scheduler as start_scheduler
+        from backend.services.reminder_notifier import get_reminder_notifier
+        
+        # Get the scheduler and notifier
+        _reminder_scheduler = start_scheduler(check_interval=30)  # Check every 30 seconds
+        notifier = get_reminder_notifier()
+        
+        # Register the notification callback
+        _reminder_scheduler.register_callback(notifier.notify_reminder)
+        
+        print("[OK] Reminder scheduler initialized (checking every 30 seconds)")
+    except ImportError as e:
+        print(f"[!] Reminder scheduler not available: {e}")
+    except Exception as e:
+        print(f"[!] Failed to start reminder scheduler: {e}")
+
 def main():
     """Main function to start the application"""
     # Start server in background
@@ -64,6 +86,9 @@ def main():
     
     # Start wake word detection
     start_wake_word_detection()
+    
+    # Start reminder scheduler
+    start_reminder_scheduler()
     
     # Check if frontend build exists
     if FRONTEND_INDEX.exists():

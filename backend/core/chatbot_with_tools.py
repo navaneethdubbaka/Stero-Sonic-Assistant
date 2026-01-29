@@ -1,10 +1,10 @@
 """
 Enhanced chatbot with Langchain tools integration
 The LLM can now automatically call tools based on user requests
+Supports both Gemini and OpenAI as LLM providers
 """
 
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.agents import initialize_agent, AgentType
 from langchain.prompts import PromptTemplate
@@ -14,18 +14,48 @@ from typing import Optional
 
 from core.tools import get_all_tools
 
-class SteroSonicChatbotWithTools:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
+
+def get_llm_provider():
+    """Get the configured LLM provider from environment"""
+    return os.getenv("LLM_PROVIDER", "gemini").lower()
+
+
+def create_llm_for_tools(provider: Optional[str] = None):
+    """Create LLM instance based on provider configuration (optimized for tool use)"""
+    provider = provider or get_llm_provider()
+    
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return ChatOpenAI(
+            model=model,
+            temperature=0.7,
+            openai_api_key=api_key
+        )
+    else:  # Default to Gemini
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
         
-        # Initialize LLM
-        self.llm = ChatGoogleGenerativeAI(
+        return ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             temperature=0.7,
-            google_api_key=self.api_key
+            google_api_key=api_key
         )
+
+
+class SteroSonicChatbotWithTools:
+    def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
+        self.provider = provider or get_llm_provider()
+        
+        # Initialize LLM based on provider
+        self.llm = create_llm_for_tools(self.provider)
+        print(f"[LLM] Initialized chatbot with tools using provider: {self.provider}")
         
         # Get all tools
         self.tools = get_all_tools()

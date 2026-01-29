@@ -13,6 +13,7 @@ spacy==3.7.2
 google-generativeai==0.3.2
 langchain==0.1.0
 langchain-google-genai==0.0.4
+langchain-openai==0.0.5
 langchain-core>=0.1.7,<0.2
 langchain-community==0.0.10
 selenium==4.15.2
@@ -26,4 +27,10 @@ matplotlib==3.8.2
 pillow==10.1.0
 aiofiles==23.2.1
 pywin32==306; sys_platform == "win32"
+# Note: winrt only supports Python 3.7-3.9, not Python 3.10+
+# winrt; sys_platform == "win32" and python_version < "3.10"
+
+# Wake word detection
+openwakeword
+sounddevice
 

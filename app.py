@@ -10,6 +10,13 @@ import os
 from pathlib import Path
 import sys
 
+# Set UTF-8 encoding for console output on Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
@@ -20,9 +27,30 @@ BACKEND_PORT = 8000
 FRONTEND_BUILD_PATH = Path(__file__).parent / "frontend" / "build"
 FRONTEND_INDEX = FRONTEND_BUILD_PATH / "index.html"
 
+# Wake word detector instance
+_wake_word_detector = None
+
 def start_server():
     """Start FastAPI server in a separate thread"""
     uvicorn.run(app, host="127.0.0.1", port=BACKEND_PORT, log_level="info")
+
+def start_wake_word_detection():
+    """Start wake word detection in background"""
+    global _wake_word_detector
+    try:
+        from backend.services.wakeword_service import start_wake_word_detection as start_detector
+        
+        def on_wake_word():
+            print("[WAKE] Wake word 'Sonic' detected! Ready for command...")
+            # The voice API will handle the detection event
+        
+        _wake_word_detector = start_detector(on_wake_word)
+        print("[OK] Wake word detection initialized")
+    except ImportError as e:
+        print(f"[!] Wake word detection not available: {e}")
+        print("   Install with: pip install openwakeword sounddevice")
+    except Exception as e:
+        print(f"[!] Failed to start wake word detection: {e}")
 
 def main():
     """Main function to start the application"""
@@ -33,6 +61,9 @@ def main():
     # Wait a moment for server to start
     import time
     time.sleep(2)
+    
+    # Start wake word detection
+    start_wake_word_detection()
     
     # Check if frontend build exists
     if FRONTEND_INDEX.exists():

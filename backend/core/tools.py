@@ -27,6 +27,7 @@ from services.screenshot_service import ScreenshotService
 from services.system_service import SystemService
 from services.data_service import DataService
 from services.lens_service import LensService
+from services.notification_service import NotificationService
 
 # Initialize services
 email_service = EmailService()
@@ -36,6 +37,10 @@ screenshot_service = ScreenshotService()
 system_service = SystemService()
 data_service = DataService()
 lens_service = LensService()
+notification_service = NotificationService()
+
+# Start notification monitoring on initialization
+notification_service.start_monitoring()
 
 
 # Tool input schemas
@@ -111,6 +116,15 @@ class CloseAppsByNamesInput(BaseModel):
 
 class ListRunningAppsInput(BaseModel):
     include_system: Optional[bool] = Field(False, description="Include system/background processes as well")
+
+
+class GetNotificationsInput(BaseModel):
+    limit: Optional[int] = Field(10, description="Number of recent notifications to retrieve (default: 10)")
+
+
+class GetNotificationsByAppInput(BaseModel):
+    app_name: str = Field(description="Name of the application to filter notifications by")
+    limit: Optional[int] = Field(10, description="Number of notifications to retrieve (default: 10)")
 
 # Tool functions
 def send_email(to: str, content: str, attachment_path: Optional[str] = None) -> str:
@@ -524,6 +538,91 @@ def analyze_camera_with_vision(*args, **kwargs) -> str:
     return f"Failed to capture camera image: {camera_result.get('error', 'Unknown error')}"
 
 
+def get_recent_notifications(limit: Optional[int] = 10) -> str:
+    """Get recent notifications from notification history"""
+    result = notification_service.get_recent_notifications(limit=limit or 10)
+    if result.get("success"):
+        notifications = result.get("notifications", [])
+        if not notifications:
+            return "No recent notifications found"
+        
+        # Format notifications nicely
+        lines = []
+        for notif in notifications:
+            timestamp = notif.get('timestamp', 'Unknown time')
+            app_name = notif.get('app_name', 'Unknown app')
+            title = notif.get('title', 'No title')
+            body = notif.get('body', '')
+            
+            line = f"[{timestamp}] {app_name}: {title}"
+            if body:
+                line += f" - {body}"
+            lines.append(line)
+        
+        return f"Found {len(notifications)} recent notification(s):\n" + "\n".join(lines)
+    return f"Failed to get notifications: {result.get('error', 'Unknown error')}"
+
+
+def get_new_notifications(*args, **kwargs) -> str:
+    """Get new notifications from the last few minutes"""
+    result = notification_service.get_new_notifications(since_minutes=5)
+    if result.get("success"):
+        notifications = result.get("notifications", [])
+        if not notifications:
+            return "No new notifications found in the last 5 minutes"
+        
+        # Format notifications nicely
+        lines = []
+        for notif in notifications:
+            timestamp = notif.get('timestamp', 'Unknown time')
+            app_name = notif.get('app_name', 'Unknown app')
+            title = notif.get('title', 'No title')
+            body = notif.get('body', '')
+            
+            line = f"[{timestamp}] {app_name}: {title}"
+            if body:
+                line += f" - {body}"
+            lines.append(line)
+        
+        return f"Found {len(notifications)} new notification(s):\n" + "\n".join(lines)
+    return f"Failed to get new notifications: {result.get('error', 'Unknown error')}"
+
+
+def get_notifications_by_app(app_name: str, limit: Optional[int] = 10) -> str:
+    """Get notifications filtered by application name"""
+    result = notification_service.get_notifications_by_app(app_name=app_name, limit=limit or 10)
+    if result.get("success"):
+        notifications = result.get("notifications", [])
+        if not notifications:
+            return f"No notifications found from {app_name}"
+        
+        # Format notifications nicely
+        lines = []
+        content_available = False
+        for notif in notifications:
+            timestamp = notif.get('timestamp', 'Unknown time')
+            title = notif.get('title', 'No title')
+            body = notif.get('body', '')
+            
+            # Check if this is the privacy restriction message
+            if body and "Content not available" not in body and body.strip():
+                content_available = True
+            
+            line = f"[{timestamp}] {title}"
+            if body and body.strip():
+                line += f" - {body}"
+            lines.append(line)
+        
+        response = f"Found {len(notifications)} notification(s) from {app_name}:\n" + "\n".join(lines)
+        
+        # Add note if content is not available
+        if not content_available:
+            response += "\n\nNote: Windows privacy restrictions prevent accessing notification content from history. Content is only available for notifications captured in real-time as they arrive."
+        
+        return response
+    return f"Failed to get notifications from {app_name}: {result.get('error', 'Unknown error')}"
+
+
 # Create Langchain tools
 def get_all_tools():
     """Get all available tools for the agent"""
@@ -682,6 +781,24 @@ def get_all_tools():
             description="Capture an image from the camera and analyze it using Gemini vision AI. Use this when user wants to take a photo and understand or analyze it using AI vision.",
             args_schema=None
         ),
+        StructuredTool.from_function(
+            func=get_recent_notifications,
+            name="get_recent_notifications",
+            description="Get recent notifications from notification history. Use this when user asks about notifications, recent notifications, or any new notifications.",
+            args_schema=GetNotificationsInput
+        ),
+        StructuredTool.from_function(
+            func=get_new_notifications,
+            name="get_new_notifications",
+            description="Get new notifications from the last few minutes. Use this when user asks about new notifications or any new notifications.",
+            args_schema=None
+        ),
+        StructuredTool.from_function(
+            func=get_notifications_by_app,
+            name="get_notifications_by_app",
+            description="Get notifications filtered by application name. Use this when user asks about notifications from a specific app (e.g., 'notifications from WhatsApp', 'notifications from Outlook').",
+            args_schema=GetNotificationsByAppInput
+        ),
         ]
     except Exception as e:
         print(f"Warning: Could not create StructuredTools, using regular Tools: {e}")
@@ -801,6 +918,21 @@ def get_all_tools():
                 name="analyze_camera_with_vision",
                 func=analyze_camera_with_vision,
                 description="Capture an image from the camera and analyze it using Gemini vision AI"
+            ),
+            Tool(
+                name="get_recent_notifications",
+                func=lambda args: (lambda a=_parse_args(args): get_recent_notifications(a.get('limit', 10)))(),
+                description="Get recent notifications from notification history"
+            ),
+            Tool(
+                name="get_new_notifications",
+                func=get_new_notifications,
+                description="Get new notifications from the last few minutes"
+            ),
+            Tool(
+                name="get_notifications_by_app",
+                func=lambda args: (lambda a=_parse_args(args): get_notifications_by_app(a.get('app_name', ''), a.get('limit', 10)))(),
+                description="Get notifications filtered by application name"
             ),
         ]
     

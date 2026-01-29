@@ -9,6 +9,10 @@ import os
 import time
 from pathlib import Path
 
+# Set UTF-8 encoding for console output on Windows
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 def check_dependencies():
     """Check if required dependencies are installed"""
     print("Checking dependencies...")
@@ -17,26 +21,43 @@ def check_dependencies():
         import fastapi
         import uvicorn
         import webview
-        print("✓ Python dependencies OK")
+        print("[OK] Python dependencies OK")
     except ImportError as e:
-        print(f"✗ Missing dependency: {e}")
+        print(f"[X] Missing dependency: {e}")
         print("Please run: pip install -r requirements.txt")
         return False
+    
+    # Check wake word dependencies
+    try:
+        import openwakeword
+        import sounddevice
+        print("[OK] Wake word dependencies OK")
+    except ImportError as e:
+        print(f"[!] Wake word detection unavailable: {e}")
+        print("  Install with: pip install openwakeword sounddevice")
+        print("  (Application will still work without wake word detection)")
+    
+    # Check for wake word model
+    model_path = Path(__file__).parent / "sonic_india2.onnx"
+    if model_path.exists():
+        print("[OK] Wake word model found")
+    else:
+        print("[!] Wake word model not found (sonic_india2.onnx)")
     
     # Check spaCy model
     try:
         import spacy
         nlp = spacy.load("en_core_web_sm")
-        print("✓ spaCy model OK")
+        print("[OK] spaCy model OK")
     except OSError:
-        print("✗ spaCy model not found")
-        print("Please run: python -m spacy download en_core_web_sm")
+        print("[X] spaCy model not found")
+        print("Please run: pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl")
         return False
     
     # Check .env file
     env_path = Path(".env")
     if not env_path.exists():
-        print("⚠ .env file not found")
+        print("[!] .env file not found")
         print("Please create .env file with required variables (see .env.example)")
     
     return True

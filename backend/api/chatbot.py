@@ -4,15 +4,16 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from core.chatbot import get_chatbot, TOOLS_AVAILABLE
 from core.speech import tts
 
 # Try to import tools-enabled chatbot
 try:
-    from core.chatbot_with_tools import get_chatbot_with_tools
+    from core.chatbot_with_tools import get_chatbot_with_tools, reset_chatbot as reset_tools_chatbot
 except ImportError:
     get_chatbot_with_tools = None
+    reset_tools_chatbot = None
 
 router = APIRouter()
 
@@ -78,12 +79,65 @@ async def chat_with_tts(chat_input: ChatInput):
         return {"success": False, "error": str(e)}
 
 @router.post("/reset")
-async def reset_chatbot():
-    """Reset chatbot conversation"""
+async def reset_conversation():
+    """Reset chatbot conversation memory"""
     try:
+        # Reset basic chatbot
         chatbot = get_chatbot()
         chatbot.reset()
-        return {"success": True, "message": "Conversation reset"}
+        
+        # Reset tools-enabled chatbot if available
+        if reset_tools_chatbot:
+            reset_tools_chatbot()
+        
+        return {"success": True, "message": "Conversation memory cleared"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/history")
+async def get_conversation_history():
+    """Get the conversation history"""
+    try:
+        if get_chatbot_with_tools:
+            chatbot = get_chatbot_with_tools()
+            history = chatbot.get_conversation_history()
+            return {
+                "success": True,
+                "history": history,
+                "message_count": len(history)
+            }
+        else:
+            return {
+                "success": True,
+                "history": [],
+                "message_count": 0,
+                "note": "Tools-enabled chatbot not available"
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/status")
+async def get_chatbot_status():
+    """Get chatbot status and capabilities"""
+    try:
+        tools_available = TOOLS_AVAILABLE and get_chatbot_with_tools is not None
+        
+        status = {
+            "success": True,
+            "tools_available": tools_available,
+            "memory_enabled": True,
+            "provider": "unknown"
+        }
+        
+        if tools_available:
+            chatbot = get_chatbot_with_tools()
+            status["provider"] = chatbot.provider
+            status["conversation_length"] = len(chatbot.conversation_history)
+            status["tools_count"] = len(chatbot.tools) if hasattr(chatbot, 'tools') else 0
+        
+        return status
     except Exception as e:
         return {"success": False, "error": str(e)}
 

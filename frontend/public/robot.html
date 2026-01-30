@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Robot Control - Stero Sonic Assistant</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0f0f23 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            overflow-x: hidden;
+            touch-action: manipulation;
+        }
+
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 15px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            padding: 10px 0 15px;
+        }
+
+        .logo {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        h1 {
+            font-size: 1.4em;
+            font-weight: 600;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        .status-badge {
+            font-size: 0.75em;
+            padding: 4px 12px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-badge.connected {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+            border: 1px solid rgba(255, 68, 68, 0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Camera Feed */
+        .camera-section {
+            margin: 15px 0;
+        }
+
+        .camera-feed {
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .camera-feed img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .camera-feed .placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 1em;
+            gap: 10px;
+        }
+
+        .camera-feed .placeholder-icon {
+            font-size: 3em;
+            opacity: 0.5;
+        }
+
+        /* Controls Grid */
+        .controls-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .d-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 8px;
+            max-width: 280px;
+            margin: 0 auto;
+            aspect-ratio: 1;
+        }
+
+        .control-btn {
+            border: none;
+            border-radius: 16px;
+            font-size: 1.8em;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .control-btn::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .control-btn:active {
+            transform: scale(0.92);
+        }
+
+        .direction-btn {
+            background: linear-gradient(145deg, #2a4a7c, #1a3a5c);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+        }
+
+        .direction-btn:active {
+            background: linear-gradient(145deg, #3a6aac, #2a5a8c);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+        }
+
+        .stop-btn {
+            background: linear-gradient(145deg, #c0392b, #962d22);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(192, 57, 43, 0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+        }
+
+        .stop-btn:active {
+            background: linear-gradient(145deg, #e74c3c, #c0392b);
+        }
+
+        .empty-cell {
+            visibility: hidden;
+        }
+
+        /* Sliders Section */
+        .sliders-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .slider-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .slider-card label {
+            display: block;
+            font-size: 0.8em;
+            color: #00d9ff;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .slider-value {
+            color: #fff;
+            font-weight: 700;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 36px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 18px;
+            outline: none;
+            padding: 0 5px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 26px;
+            height: 26px;
+            background: linear-gradient(145deg, #00d9ff, #0099cc);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0, 217, 255, 0.4);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 26px;
+            height: 26px;
+            background: linear-gradient(145deg, #00d9ff, #0099cc);
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0, 217, 255, 0.4);
+        }
+
+        /* Voice Section */
+        .voice-section {
+            text-align: center;
+            padding: 15px 0;
+        }
+
+        .mic-btn {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(145deg, #00d9ff, #00a8cc);
+            color: #0f0f23;
+            font-size: 1.8em;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.4);
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .mic-btn:active {
+            transform: scale(1.05);
+        }
+
+        .mic-btn.listening {
+            animation: mic-pulse 1s infinite;
+            background: linear-gradient(145deg, #ff6b6b, #ee5a5a);
+            box-shadow: 0 4px 25px rgba(255, 107, 107, 0.5);
+        }
+
+        @keyframes mic-pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 4px 20px rgba(255, 107, 107, 0.4); }
+            50% { transform: scale(1.08); box-shadow: 0 4px 35px rgba(255, 107, 107, 0.7); }
+        }
+
+        .voice-text {
+            margin-top: 12px;
+            min-height: 20px;
+            font-size: 0.9em;
+            color: #888;
+        }
+
+        .voice-text.active {
+            color: #00d9ff;
+        }
+
+        /* Settings Panel */
+        .settings-toggle {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 1.2em;
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        .settings-panel {
+            position: fixed;
+            top: 0;
+            right: -320px;
+            width: 300px;
+            height: 100vh;
+            background: rgba(15, 15, 35, 0.98);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 60px 20px 20px;
+            transition: right 0.3s ease;
+            z-index: 99;
+            overflow-y: auto;
+        }
+
+        .settings-panel.open {
+            right: 0;
+        }
+
+        .settings-panel h3 {
+            color: #00d9ff;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+        }
+
+        .setting-group {
+            margin-bottom: 20px;
+        }
+
+        .setting-group label {
+            display: block;
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .setting-group input[type="text"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            font-size: 0.9em;
+        }
+
+        .setting-group input[type="text"]:focus {
+            outline: none;
+            border-color: #00d9ff;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(145deg, #00d9ff, #00a8cc);
+            color: #0f0f23;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .btn-secondary {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: transparent;
+            color: #fff;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        /* Overlay for settings */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            z-index: 98;
+        }
+
+        .overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Voice commands hint */
+        .voice-hint {
+            margin-top: 8px;
+            font-size: 0.75em;
+            color: #666;
+        }
+
+        /* Command feedback */
+        .command-feedback {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: rgba(0, 217, 255, 0.9);
+            color: #0f0f23;
+            border-radius: 20px;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 100;
+        }
+
+        .command-feedback.visible {
+            opacity: 1;
+        }
+
+        /* Responsive */
+        @media (max-width: 360px) {
+            .d-pad {
+                max-width: 240px;
+            }
+            .control-btn {
+                font-size: 1.5em;
+            }
+        }
+
+        @media (min-height: 800px) {
+            .d-pad {
+                max-width: 320px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">🤖</div>
+            <h1>Robot Control</h1>
+            <div class="status-bar">
+                <span id="status" class="status-badge disconnected">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Connecting...</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="camera-section">
+            <div class="camera-feed">
+                <img id="camera" alt="Camera Feed" style="display: none;">
+                <div id="camera-placeholder" class="placeholder">
+                    <span class="placeholder-icon">📷</span>
+                    <span>Camera Feed</span>
+                    <span style="font-size: 0.8em;">Configure Pi URL in settings</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-section">
+            <div class="d-pad">
+                <div class="empty-cell"></div>
+                <button class="control-btn direction-btn" data-direction="forward" aria-label="Forward">▲</button>
+                <div class="empty-cell"></div>
+                
+                <button class="control-btn direction-btn" data-direction="left" aria-label="Left">◀</button>
+                <button class="control-btn stop-btn" data-direction="stop" aria-label="Stop">■</button>
+                <button class="control-btn direction-btn" data-direction="right" aria-label="Right">▶</button>
+                
+                <div class="empty-cell"></div>
+                <button class="control-btn direction-btn" data-direction="backward" aria-label="Backward">▼</button>
+                <div class="empty-cell"></div>
+            </div>
+
+            <div class="sliders-section">
+                <div class="slider-card">
+                    <label>Speed: <span id="speed-value" class="slider-value">160</span></label>
+                    <input type="range" id="speed-slider" min="50" max="255" value="160">
+                </div>
+                <div class="slider-card">
+                    <label>Pan: <span id="servo-value" class="slider-value">90</span>°</label>
+                    <input type="range" id="servo-slider" min="0" max="180" value="90">
+                </div>
+            </div>
+
+            <div class="voice-section">
+                <button id="mic-btn" class="mic-btn" aria-label="Voice Control">🎤</button>
+                <p id="voice-text" class="voice-text">Tap microphone to speak</p>
+                <p class="voice-hint">Try: "forward", "turn left", "stop", "look right"</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Toggle -->
+    <button class="settings-toggle" id="settings-toggle" aria-label="Settings">⚙️</button>
+
+    <!-- Settings Panel -->
+    <div class="overlay" id="overlay"></div>
+    <div class="settings-panel" id="settings-panel">
+        <h3>⚙️ Settings</h3>
+        
+        <div class="setting-group">
+            <label>Raspberry Pi URL</label>
+            <input type="text" id="pi-url" placeholder="http://192.168.1.100:8080">
+        </div>
+
+        <button class="btn-primary" id="connect-btn">Connect</button>
+        <button class="btn-secondary" id="test-btn">Test Connection</button>
+        
+        <div class="setting-group" style="margin-top: 30px;">
+            <label>Quick Connect (same network)</label>
+            <button class="btn-secondary" id="scan-btn">Scan Network</button>
+        </div>
+
+        <div class="setting-group" style="margin-top: 30px;">
+            <label>Voice Language</label>
+            <select id="voice-lang" style="width: 100%; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.2);">
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="hi-IN">Hindi</option>
+                <option value="es-ES">Spanish</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Command Feedback -->
+    <div class="command-feedback" id="command-feedback"></div>
+
+    <script>
+        // ========================================
+        // STATE
+        // ========================================
+        let piUrl = localStorage.getItem('robotPiUrl') || '';
+        let currentSpeed = 160;
+        let isListening = false;
+        let recognition = null;
+        let cameraRetryTimeout = null;
+
+        // ========================================
+        // DOM ELEMENTS
+        // ========================================
+        const statusEl = document.getElementById('status');
+        const statusTextEl = document.getElementById('status-text');
+        const cameraEl = document.getElementById('camera');
+        const cameraPlaceholder = document.getElementById('camera-placeholder');
+        const micBtn = document.getElementById('mic-btn');
+        const voiceText = document.getElementById('voice-text');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedValue = document.getElementById('speed-value');
+        const servoSlider = document.getElementById('servo-slider');
+        const servoValue = document.getElementById('servo-value');
+        const piUrlInput = document.getElementById('pi-url');
+        const settingsPanel = document.getElementById('settings-panel');
+        const overlay = document.getElementById('overlay');
+        const commandFeedback = document.getElementById('command-feedback');
+
+        // ========================================
+        // INITIALIZATION
+        // ========================================
+        function init() {
+            // Load saved URL
+            if (piUrl) {
+                piUrlInput.value = piUrl;
+                connectToPi();
+            }
+
+            // Initialize speech recognition
+            initSpeechRecognition();
+
+            // Setup event listeners
+            setupEventListeners();
+
+            // Start status polling
+            setInterval(checkStatus, 5000);
+        }
+
+        // ========================================
+        // SPEECH RECOGNITION
+        // ========================================
+        function initSpeechRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                voiceText.textContent = 'Speech recognition not supported';
+                micBtn.style.opacity = '0.5';
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = document.getElementById('voice-lang').value;
+
+            recognition.onresult = (event) => {
+                const transcript = Array.from(event.results)
+                    .map(result => result[0].transcript)
+                    .join('');
+                
+                voiceText.textContent = transcript;
+                voiceText.classList.add('active');
+
+                if (event.results[event.results.length - 1].isFinal) {
+                    processVoiceCommand(transcript.toLowerCase());
+                }
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                micBtn.classList.remove('listening');
+                setTimeout(() => {
+                    if (!isListening) {
+                        voiceText.classList.remove('active');
+                    }
+                }, 2000);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                isListening = false;
+                micBtn.classList.remove('listening');
+                voiceText.textContent = `Error: ${event.error}`;
+            };
+        }
+
+        // ========================================
+        // VOICE COMMAND PROCESSING
+        // ========================================
+        function processVoiceCommand(text) {
+            console.log('Processing:', text);
+            let action = null;
+
+            // Movement commands
+            if (/\b(forward|go|ahead|move forward|straight)\b/.test(text)) {
+                action = 'forward';
+                sendMove('forward');
+            } else if (/\b(back|backward|reverse|go back)\b/.test(text)) {
+                action = 'backward';
+                sendMove('backward');
+            } else if (/\bleft\b/.test(text)) {
+                if (/\blook\b/.test(text)) {
+                    action = 'look left';
+                    setServo(45);
+                } else {
+                    action = 'turn left';
+                    sendMove('left');
+                }
+            } else if (/\bright\b/.test(text)) {
+                if (/\blook\b/.test(text)) {
+                    action = 'look right';
+                    setServo(135);
+                } else {
+                    action = 'turn right';
+                    sendMove('right');
+                }
+            } else if (/\b(stop|halt|freeze|brake)\b/.test(text)) {
+                action = 'stop';
+                sendMove('stop');
+            } else if (/\b(center|straight|look ahead|look forward)\b/.test(text)) {
+                action = 'look center';
+                setServo(90);
+            } else if (/\b(faster|speed up)\b/.test(text)) {
+                currentSpeed = Math.min(255, currentSpeed + 30);
+                speedSlider.value = currentSpeed;
+                speedValue.textContent = currentSpeed;
+                action = `speed ${currentSpeed}`;
+            } else if (/\b(slower|slow down)\b/.test(text)) {
+                currentSpeed = Math.max(50, currentSpeed - 30);
+                speedSlider.value = currentSpeed;
+                speedValue.textContent = currentSpeed;
+                action = `speed ${currentSpeed}`;
+            } else if (/\b(capture|photo|picture|image|take a picture)\b/.test(text)) {
+                action = 'capture';
+                captureImage();
+            }
+
+            if (action) {
+                showFeedback(action.toUpperCase());
+            }
+        }
+
+        // ========================================
+        // API FUNCTIONS
+        // ========================================
+        async function sendMove(direction) {
+            if (!piUrl) {
+                showFeedback('Set Pi URL first!');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${piUrl}/robot/move`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ direction, speed: currentSpeed })
+                });
+                const data = await response.json();
+                console.log('Move:', data);
+            } catch (error) {
+                console.error('Move error:', error);
+            }
+        }
+
+        async function setServo(angle) {
+            if (!piUrl) return;
+
+            try {
+                const response = await fetch(`${piUrl}/robot/servo`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ angle })
+                });
+                const data = await response.json();
+                servoSlider.value = angle;
+                servoValue.textContent = angle;
+                console.log('Servo:', data);
+            } catch (error) {
+                console.error('Servo error:', error);
+            }
+        }
+
+        async function captureImage() {
+            if (!piUrl) return;
+
+            try {
+                const response = await fetch(`${piUrl}/camera/capture`);
+                const data = await response.json();
+                if (data.success) {
+                    showFeedback('Image captured!');
+                }
+            } catch (error) {
+                console.error('Capture error:', error);
+            }
+        }
+
+        async function checkStatus() {
+            if (!piUrl) {
+                updateStatus(false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${piUrl}/status`, { timeout: 3000 });
+                const data = await response.json();
+                updateStatus(data.arduino_connected);
+            } catch (error) {
+                updateStatus(false);
+            }
+        }
+
+        // ========================================
+        // UI FUNCTIONS
+        // ========================================
+        function updateStatus(connected) {
+            if (connected) {
+                statusEl.className = 'status-badge connected';
+                statusTextEl.textContent = 'Connected';
+            } else {
+                statusEl.className = 'status-badge disconnected';
+                statusTextEl.textContent = piUrl ? 'Disconnected' : 'Not configured';
+            }
+        }
+
+        function showFeedback(message) {
+            commandFeedback.textContent = message;
+            commandFeedback.classList.add('visible');
+            setTimeout(() => {
+                commandFeedback.classList.remove('visible');
+            }, 1500);
+        }
+
+        function connectToPi() {
+            piUrl = piUrlInput.value.trim();
+            if (!piUrl) {
+                alert('Please enter the Raspberry Pi URL');
+                return;
+            }
+
+            // Ensure URL format
+            if (!piUrl.startsWith('http')) {
+                piUrl = 'http://' + piUrl;
+            }
+            // Remove trailing slash
+            piUrl = piUrl.replace(/\/$/, '');
+
+            localStorage.setItem('robotPiUrl', piUrl);
+            piUrlInput.value = piUrl;
+
+            // Connect camera stream
+            connectCamera();
+
+            // Check status
+            checkStatus();
+
+            // Close settings
+            toggleSettings(false);
+
+            showFeedback('Connecting...');
+        }
+
+        function connectCamera() {
+            if (!piUrl) return;
+
+            // Clear any pending retry
+            if (cameraRetryTimeout) {
+                clearTimeout(cameraRetryTimeout);
+            }
+
+            const streamUrl = `${piUrl}/camera/stream`;
+            cameraEl.src = streamUrl;
+            cameraEl.style.display = 'block';
+            cameraPlaceholder.style.display = 'none';
+
+            cameraEl.onerror = () => {
+                cameraEl.style.display = 'none';
+                cameraPlaceholder.style.display = 'flex';
+                cameraPlaceholder.querySelector('span:last-child').textContent = 'Camera unavailable - retrying...';
+                
+                // Retry after 5 seconds
+                cameraRetryTimeout = setTimeout(connectCamera, 5000);
+            };
+
+            cameraEl.onload = () => {
+                cameraEl.style.display = 'block';
+                cameraPlaceholder.style.display = 'none';
+            };
+        }
+
+        function toggleSettings(show) {
+            if (show === undefined) {
+                show = !settingsPanel.classList.contains('open');
+            }
+            
+            if (show) {
+                settingsPanel.classList.add('open');
+                overlay.classList.add('visible');
+            } else {
+                settingsPanel.classList.remove('open');
+                overlay.classList.remove('visible');
+            }
+        }
+
+        // ========================================
+        // EVENT LISTENERS
+        // ========================================
+        function setupEventListeners() {
+            // Control buttons
+            document.querySelectorAll('.control-btn').forEach(btn => {
+                const direction = btn.dataset.direction;
+
+                // Touch events (for continuous movement)
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    sendMove(direction);
+                    showFeedback(direction.toUpperCase());
+                });
+
+                btn.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    if (direction !== 'stop') {
+                        sendMove('stop');
+                    }
+                });
+
+                // Mouse events (for desktop)
+                btn.addEventListener('mousedown', () => {
+                    sendMove(direction);
+                    showFeedback(direction.toUpperCase());
+                });
+
+                btn.addEventListener('mouseup', () => {
+                    if (direction !== 'stop') {
+                        sendMove('stop');
+                    }
+                });
+
+                btn.addEventListener('mouseleave', () => {
+                    if (direction !== 'stop') {
+                        sendMove('stop');
+                    }
+                });
+            });
+
+            // Mic button
+            micBtn.addEventListener('click', () => {
+                if (!recognition) {
+                    alert('Speech recognition not supported in this browser');
+                    return;
+                }
+
+                if (isListening) {
+                    recognition.stop();
+                } else {
+                    recognition.lang = document.getElementById('voice-lang').value;
+                    recognition.start();
+                    isListening = true;
+                    micBtn.classList.add('listening');
+                    voiceText.textContent = 'Listening...';
+                    voiceText.classList.add('active');
+                }
+            });
+
+            // Speed slider
+            speedSlider.addEventListener('input', (e) => {
+                currentSpeed = parseInt(e.target.value);
+                speedValue.textContent = currentSpeed;
+            });
+
+            // Servo slider
+            servoSlider.addEventListener('change', (e) => {
+                const angle = parseInt(e.target.value);
+                servoValue.textContent = angle;
+                setServo(angle);
+            });
+
+            // Settings
+            document.getElementById('settings-toggle').addEventListener('click', () => toggleSettings());
+            overlay.addEventListener('click', () => toggleSettings(false));
+            document.getElementById('connect-btn').addEventListener('click', connectToPi);
+            
+            document.getElementById('test-btn').addEventListener('click', async () => {
+                const testUrl = piUrlInput.value.trim();
+                if (!testUrl) {
+                    alert('Enter a URL first');
+                    return;
+                }
+
+                const url = testUrl.startsWith('http') ? testUrl : 'http://' + testUrl;
+                
+                try {
+                    const response = await fetch(`${url.replace(/\/$/, '')}/status`);
+                    const data = await response.json();
+                    alert(`Connection successful!\nArduino: ${data.arduino_connected ? 'Connected' : 'Disconnected'}\nCamera: ${data.camera_available ? 'Available' : 'Unavailable'}`);
+                } catch (error) {
+                    alert(`Connection failed: ${error.message}`);
+                }
+            });
+
+            // Voice language change
+            document.getElementById('voice-lang').addEventListener('change', (e) => {
+                if (recognition) {
+                    recognition.lang = e.target.value;
+                }
+            });
+
+            // Keyboard controls
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT') return;
+                
+                switch(e.key) {
+                    case 'ArrowUp':
+                    case 'w':
+                        sendMove('forward');
+                        showFeedback('FORWARD');
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                        sendMove('backward');
+                        showFeedback('BACKWARD');
+                        break;
+                    case 'ArrowLeft':
+                    case 'a':
+                        sendMove('left');
+                        showFeedback('LEFT');
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                        sendMove('right');
+                        showFeedback('RIGHT');
+                        break;
+                    case ' ':
+                        sendMove('stop');
+                        showFeedback('STOP');
+                        e.preventDefault();
+                        break;
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                if (e.target.tagName === 'INPUT') return;
+                
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+                    sendMove('stop');
+                }
+            });
+        }
+
+        // ========================================
+        // START
+        // ========================================
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

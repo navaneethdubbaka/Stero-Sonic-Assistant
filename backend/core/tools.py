@@ -30,6 +30,7 @@ from services.lens_service import LensService
 from services.notification_service import NotificationService
 from services.reminder_service import get_reminder_service
 from services.spotify_service import get_spotify_service
+from services.robot_service import get_robot_service
 
 # Initialize services
 email_service = EmailService()
@@ -44,6 +45,9 @@ reminder_service = get_reminder_service()
 
 # Initialize Spotify service with play button template image
 spotify_service = get_spotify_service(play_button_image_path=r"E:\Stero Sonic Assistant\spotify_play.png")
+
+# Initialize Robot service for Pi robot control
+robot_service = get_robot_service()
 
 # Start notification monitoring on initialization
 notification_service.start_monitoring()
@@ -131,6 +135,21 @@ class GetNotificationsInput(BaseModel):
 class GetNotificationsByAppInput(BaseModel):
     app_name: str = Field(description="Name of the application to filter notifications by")
     limit: Optional[int] = Field(10, description="Number of notifications to retrieve (default: 10)")
+
+
+# Robot tool input schemas
+class RobotMoveInput(BaseModel):
+    direction: str = Field(description="Direction to move: 'forward', 'backward', 'left', 'right', or 'stop'")
+    speed: Optional[int] = Field(160, description="Movement speed (0-255, default 160)")
+
+
+class RobotServoInput(BaseModel):
+    angle: int = Field(description="Servo angle in degrees (0-180, 90 is center)")
+
+
+class RobotLookInput(BaseModel):
+    direction: str = Field(description="Direction to look: 'left', 'right', or 'center'")
+
 
 # Tool functions
 def send_email(to: str, content: str, attachment_path: Optional[str] = None) -> str:
@@ -827,6 +846,281 @@ def search_music(query: str, platform: str = "spotify") -> str:
         return f"Error searching music: {str(e)}"
 
 
+# Robot control tool functions
+def robot_move(direction: str = "stop", speed: int = 160, **kwargs) -> str:
+    """
+    Move the robot in a direction
+    
+    Args:
+        direction: One of 'forward', 'backward', 'left', 'right', 'stop'
+        speed: Movement speed (0-255, default 160)
+    
+    Returns:
+        Status message
+    
+    Examples:
+        - "move the robot forward" -> direction="forward"
+        - "turn the robot left" -> direction="left"
+        - "stop the robot" -> direction="stop"
+        - "go back" -> direction="backward"
+    """
+    try:
+        # Debug: Print what we received
+        print(f"[DEBUG robot_move] Raw input - direction: {direction!r} (type: {type(direction).__name__}), speed: {speed!r} (type: {type(speed).__name__}), kwargs: {kwargs}")
+        
+        # Handle if direction is actually the RobotMoveInput model or a dict
+        if hasattr(direction, 'direction'):
+            # It's a Pydantic model
+            speed = getattr(direction, 'speed', speed) or 160
+            direction = getattr(direction, 'direction', 'stop')
+        elif isinstance(direction, dict):
+            # If direction is a dict (e.g., the whole input was passed)
+            speed = direction.get('speed', speed) or 160
+            direction = direction.get('direction', 'stop')
+        elif isinstance(direction, str) and (direction.startswith('{') or direction.startswith("'{")):
+            # The entire input was passed as a JSON/dict string - parse it
+            try:
+                # Replace single quotes with double quotes for JSON parsing
+                import json
+                json_str = direction.replace("'", '"')
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    speed = parsed.get('speed', speed) or 160
+                    direction = parsed.get('direction', 'stop')
+                    print(f"[DEBUG robot_move] Parsed from JSON string - direction: {direction!r}, speed: {speed}")
+            except json.JSONDecodeError:
+                # Try ast.literal_eval as fallback
+                try:
+                    import ast
+                    parsed = ast.literal_eval(direction)
+                    if isinstance(parsed, dict):
+                        speed = parsed.get('speed', speed) or 160
+                        direction = parsed.get('direction', 'stop')
+                        print(f"[DEBUG robot_move] Parsed with ast - direction: {direction!r}, speed: {speed}")
+                except (ValueError, SyntaxError):
+                    pass
+        
+        # Ensure direction is a string
+        direction = str(direction).lower().strip()
+        
+        # Ensure speed is an int
+        if isinstance(speed, str):
+            try:
+                speed = int(speed)
+            except ValueError:
+                speed = 160
+        speed = int(speed) if speed else 160
+        
+        print(f"[DEBUG robot_move] Processed - direction: {direction!r}, speed: {speed}")
+        
+        result = robot_service.move(direction, speed)
+        print(f"[DEBUG robot_move] Service result: {result}")
+        
+        if result.get("success"):
+            if direction == "stop":
+                return "Robot stopped"
+            return f"Robot moving {direction} at speed {speed}"
+        return f"Failed to move robot: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        import traceback
+        print(f"[DEBUG robot_move] Exception: {e}\n{traceback.format_exc()}")
+        return f"Error controlling robot: {str(e)}"
+
+
+def robot_move_forward(speed: int = 160) -> str:
+    """Move the robot forward"""
+    return robot_move("forward", speed)
+
+
+def robot_move_backward(speed: int = 160) -> str:
+    """Move the robot backward"""
+    return robot_move("backward", speed)
+
+
+def robot_turn_left(speed: int = 160) -> str:
+    """Turn the robot left"""
+    return robot_move("left", speed)
+
+
+def robot_turn_right(speed: int = 160) -> str:
+    """Turn the robot right"""
+    return robot_move("right", speed)
+
+
+def robot_stop(*args, **kwargs) -> str:
+    """Stop the robot immediately"""
+    try:
+        result = robot_service.stop()
+        if result.get("success"):
+            return "Robot stopped"
+        return f"Failed to stop robot: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error stopping robot: {str(e)}"
+
+
+def robot_set_servo(angle: int = 90, **kwargs) -> str:
+    """
+    Set the robot camera servo angle
+    
+    Args:
+        angle: Servo angle in degrees (0-180, 90 is center)
+    
+    Returns:
+        Status message
+    """
+    try:
+        # Handle various input formats from LLM
+        if isinstance(angle, dict):
+            angle = angle.get('angle', 90)
+        elif isinstance(angle, str) and (angle.startswith('{') or angle.startswith("'{")):
+            # The entire input was passed as a JSON/dict string - parse it
+            try:
+                import json
+                json_str = angle.replace("'", '"')
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    angle = parsed.get('angle', 90)
+            except:
+                try:
+                    import ast
+                    parsed = ast.literal_eval(angle)
+                    if isinstance(parsed, dict):
+                        angle = parsed.get('angle', 90)
+                except:
+                    pass
+        
+        # Ensure angle is an int
+        if isinstance(angle, str):
+            try:
+                angle = int(angle)
+            except ValueError:
+                angle = 90
+        angle = int(angle) if angle is not None else 90
+        angle = max(0, min(180, angle))  # Clamp to valid range
+        
+        result = robot_service.set_servo(angle)
+        if result.get("success"):
+            return f"Robot camera set to {angle} degrees"
+        return f"Failed to set servo: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error setting servo: {str(e)}"
+
+
+def robot_look(direction: str = "center", **kwargs) -> str:
+    """
+    Make the robot look in a direction (controls camera servo)
+    
+    Args:
+        direction: 'left', 'right', or 'center'
+    
+    Returns:
+        Status message
+    
+    Examples:
+        - "make the robot look left" -> direction="left"
+        - "robot look right" -> direction="right"
+        - "center the robot camera" -> direction="center"
+    """
+    try:
+        # Handle various input formats from LLM
+        if isinstance(direction, dict):
+            direction = direction.get('direction', 'center')
+        elif isinstance(direction, str) and (direction.startswith('{') or direction.startswith("'{")):
+            # The entire input was passed as a JSON/dict string - parse it
+            try:
+                import json
+                json_str = direction.replace("'", '"')
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    direction = parsed.get('direction', 'center')
+            except:
+                try:
+                    import ast
+                    parsed = ast.literal_eval(direction)
+                    if isinstance(parsed, dict):
+                        direction = parsed.get('direction', 'center')
+                except:
+                    pass
+        
+        direction = str(direction).lower().strip()
+        
+        if direction == "left":
+            result = robot_service.look_left()
+        elif direction == "right":
+            result = robot_service.look_right()
+        elif direction == "center":
+            result = robot_service.look_center()
+        else:
+            return f"Invalid direction: {direction}. Use 'left', 'right', or 'center'"
+        
+        if result.get("success"):
+            return f"Robot looking {direction}"
+        return f"Failed to move camera: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error moving robot camera: {str(e)}"
+
+
+def robot_capture_image(*args, **kwargs) -> str:
+    """
+    Capture an image from the robot's camera
+    
+    Returns:
+        Status message with image info
+    
+    Examples:
+        - "take a picture with the robot"
+        - "capture image from robot camera"
+        - "robot take a photo"
+    """
+    try:
+        result = robot_service.capture_image()
+        if result.get("success"):
+            return f"Image captured from robot camera successfully"
+        return f"Failed to capture image: {result.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Error capturing image from robot: {str(e)}"
+
+
+def robot_get_status(*args, **kwargs) -> str:
+    """Get the robot connection status"""
+    try:
+        result = robot_service.get_status()
+        if result.get("success"):
+            connected = result.get("arduino_connected", False)
+            camera = result.get("camera_available", False)
+            status = "connected" if connected else "disconnected"
+            cam_status = "available" if camera else "unavailable"
+            return f"Robot status: Arduino {status}, Camera {cam_status}"
+        return f"Failed to get robot status: {result.get('error', 'Unable to reach robot')}"
+    except Exception as e:
+        return f"Error getting robot status: {str(e)}"
+
+
+def open_robot_camera_stream(*args, **kwargs) -> str:
+    """
+    Open the robot's camera stream in the default web browser.
+    Use this when the user wants to see the robot's view, camera feed, or live stream.
+    
+    Returns:
+        Status message
+    
+    Examples:
+        - "show me the robot camera"
+        - "open the robot's view"
+        - "let me see what the robot sees"
+        - "open camera stream"
+        - "show robot camera feed"
+    """
+    import webbrowser
+    
+    try:
+        camera_url = "http://10.51.203.182:8080/camera/stream"
+        webbrowser.open(camera_url)
+        return f"Opened robot camera stream in browser: {camera_url}"
+    except Exception as e:
+        return f"Failed to open camera stream: {str(e)}"
+
+
 # Create Langchain tools
 def get_all_tools():
     """Get all available tools for the agent"""
@@ -1003,6 +1297,49 @@ def get_all_tools():
             description="Get notifications filtered by application name. Use this when user asks about notifications from a specific app (e.g., 'notifications from WhatsApp', 'notifications from Outlook').",
             args_schema=GetNotificationsByAppInput
         ),
+        # Robot control tools
+        StructuredTool.from_function(
+            func=robot_move,
+            name="robot_move",
+            description="Move the robot in a direction. Use this when user wants to control robot movement. Directions: 'forward', 'backward', 'left', 'right', 'stop'. Speed: 0-255 (default 160).",
+            args_schema=RobotMoveInput
+        ),
+        StructuredTool.from_function(
+            func=robot_stop,
+            name="robot_stop",
+            description="Stop the robot immediately. Use this when user says 'stop the robot', 'robot stop', 'halt', etc.",
+            args_schema=None
+        ),
+        StructuredTool.from_function(
+            func=robot_look,
+            name="robot_look",
+            description="Make the robot camera look in a direction. Use for 'robot look left/right/center', 'turn the robot camera'. Directions: 'left', 'right', 'center'.",
+            args_schema=RobotLookInput
+        ),
+        StructuredTool.from_function(
+            func=robot_set_servo,
+            name="robot_set_servo",
+            description="Set robot camera servo to specific angle (0-180 degrees, 90 is center). Use when user specifies exact angle.",
+            args_schema=RobotServoInput
+        ),
+        StructuredTool.from_function(
+            func=robot_capture_image,
+            name="robot_capture_image",
+            description="Capture an image from the robot's camera. Use when user wants to take a photo with the robot camera.",
+            args_schema=None
+        ),
+        StructuredTool.from_function(
+            func=robot_get_status,
+            name="robot_get_status",
+            description="Get the robot connection status. Use when user asks about robot status or if robot is connected.",
+            args_schema=None
+        ),
+        StructuredTool.from_function(
+            func=open_robot_camera_stream,
+            name="open_robot_camera_stream",
+            description="Open the robot's camera stream in the browser. Use when user wants to see robot's view, camera feed, live stream, or what the robot sees.",
+            args_schema=None
+        ),
         ]
     except Exception as e:
         print(f"Warning: Could not create StructuredTools, using regular Tools: {e}")
@@ -1177,6 +1514,45 @@ def get_all_tools():
                     a.get('platform', 'spotify')
                 ))(),
                 description="Search for music on Spotify. Use for queries like 'search for Coldplay', 'find songs by Taylor Swift'"
+            ),
+            # Robot control tools
+            Tool(
+                name="robot_move",
+                func=lambda args: (lambda a=_parse_args(args): robot_move(
+                    a.get('direction', a.get('__arg', 'stop')),
+                    a.get('speed', 160)
+                ))(),
+                description="Move the robot in a direction. Directions: 'forward', 'backward', 'left', 'right', 'stop'. Speed: 0-255 (default 160)."
+            ),
+            Tool(
+                name="robot_stop",
+                func=robot_stop,
+                description="Stop the robot immediately"
+            ),
+            Tool(
+                name="robot_look",
+                func=lambda args: (lambda a=_parse_args(args): robot_look(a.get('direction', a.get('__arg', 'center'))))(),
+                description="Make the robot camera look in a direction: 'left', 'right', 'center'"
+            ),
+            Tool(
+                name="robot_set_servo",
+                func=lambda args: (lambda a=_parse_args(args): robot_set_servo(int(a.get('angle', a.get('__arg', 90)))))(),
+                description="Set robot camera servo to specific angle (0-180 degrees)"
+            ),
+            Tool(
+                name="robot_capture_image",
+                func=robot_capture_image,
+                description="Capture an image from the robot's camera"
+            ),
+            Tool(
+                name="robot_get_status",
+                func=robot_get_status,
+                description="Get the robot connection status"
+            ),
+            Tool(
+                name="open_robot_camera_stream",
+                func=open_robot_camera_stream,
+                description="Open the robot's camera stream in the browser. Use for: 'show robot camera', 'robot's view', 'camera feed', 'what does the robot see'"
             ),
         ]
     

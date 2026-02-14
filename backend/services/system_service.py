@@ -17,9 +17,12 @@ class SystemService:
     def open_windows_search(self, app_name: str) -> dict:
         """Open Windows search and search for app"""
         try:
-            words = app_name.split()
-            if len(words) > 1:
-                app_name = ' '.join(words[1:])
+            words = app_name.strip().split()
+            # Only drop first word if it's a verb like "open", "launch", "start"
+            if words and words[0].lower() in ("open", "launch", "start"):
+                words = words[1:]
+            if words:
+                app_name = " ".join(words)
             
             pyautogui.press('winleft')
             time.sleep(1)

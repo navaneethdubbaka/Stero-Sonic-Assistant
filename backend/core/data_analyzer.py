@@ -1,20 +1,14 @@
-import os
 import pandas as pd
-from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Optional
 import re
 
+from core.llm_factory import create_llm
+
+
 class DataFrameAnalyzer:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
-        
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            temperature=1,
-            google_api_key=self.api_key
-        )
+        # LLM from factory: uses local Ollama when LOCAL_LLM=True, else Gemini/OpenAI
+        self.llm = create_llm(temperature=1)
     
     def analyze(self, dataframe_path: str, task: str) -> dict:
         """Analyze dataframe based on user task"""

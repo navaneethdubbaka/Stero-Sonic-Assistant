@@ -7,6 +7,8 @@ Run on Raspberry Pi:
     python robot_listener.py
     # or
     uvicorn robot_listener:app --host 0.0.0.0 --port 8080
+
+Autonomous mode runs separately: python run_autonomous.py --target bottle
 """
 
 import os
@@ -226,7 +228,6 @@ class MoveCommand(BaseModel):
 
 class ServoCommand(BaseModel):
     angle: int  # 0-180
-
 
 # =========================
 # API ENDPOINTS

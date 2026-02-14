@@ -1,0 +1,91 @@
+#include <AFMotor.h>
+#include <Servo.h>
+
+// Motors
+AF_DCMotor motorLeft(4);
+AF_DCMotor motorRight(3);
+
+// Servo
+Servo camServo;
+const int SERVO_PIN = 10;   // change to 9 if using SERVO_2
+
+// Motion state
+char cmd = 'S';
+int targetSpeed = 0;
+int currentSpeed = 0;
+
+unsigned long lastCmdTime = 0;
+const int TIMEOUT = 150;
+const int ACC_STEP = 5;
+const int MAX_SPEED = 200;
+
+void setup() {
+  Serial.begin(115200);
+  camServo.attach(SERVO_PIN);
+  camServo.write(90);
+  stopMotors();
+}
+
+void loop() {
+  readSerial();
+  safetyStop();
+  smoothSpeed();
+  applyMotion();
+}
+
+void readSerial() {
+  if (!Serial.available()) return;
+
+  String s = Serial.readStringUntil('\n');
+  s.trim();
+  lastCmdTime = millis();
+
+  if (s.startsWith("P:")) {
+    camServo.write(constrain(s.substring(2).toInt(), 0, 180));
+    return;
+  }
+
+  if (s.startsWith("F:")) { cmd='F'; targetSpeed=s.substring(2).toInt(); }
+  else if (s.startsWith("L:")) { cmd='L'; targetSpeed=s.substring(2).toInt(); }
+  else if (s.startsWith("R:")) { cmd='R'; targetSpeed=s.substring(2).toInt(); }
+  else if (s.startsWith("S")) { cmd='S'; targetSpeed=0; }
+}
+
+void safetyStop() {
+  if (millis() - lastCmdTime > TIMEOUT) {
+    cmd='S';
+    targetSpeed=0;
+  }
+}
+
+void smoothSpeed() {
+  if (currentSpeed < targetSpeed) currentSpeed += ACC_STEP;
+  else if (currentSpeed > targetSpeed) currentSpeed -= ACC_STEP;
+  currentSpeed = constrain(currentSpeed, 0, MAX_SPEED);
+}
+
+void applyMotion() {
+  motorLeft.setSpeed(currentSpeed);
+  motorRight.setSpeed(currentSpeed);
+
+  if (cmd=='F') {
+    motorLeft.run(FORWARD);
+    motorRight.run(FORWARD);
+  }
+  else if (cmd=='L') {
+    motorLeft.run(BACKWARD);
+    motorRight.run(FORWARD);
+  }
+  else if (cmd=='R') {
+    motorLeft.run(FORWARD);
+    motorRight.run(BACKWARD);
+  }
+  else {
+    stopMotors();
+  }
+}
+
+void stopMotors() {
+  motorLeft.run(RELEASE);
+  motorRight.run(RELEASE);
+}

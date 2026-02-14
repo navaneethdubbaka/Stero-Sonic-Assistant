@@ -1,8 +1,7 @@
-import os
-from langchain.schema import HumanMessage, SystemMessage
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from typing import Optional
+
+from core.llm_factory import create_llm, get_llm_provider
 
 # Import tools-enabled chatbot as alternative
 try:
@@ -11,87 +10,43 @@ try:
 except ImportError:
     TOOLS_AVAILABLE = False
 
-
-def get_llm_provider():
-    """Get the configured LLM provider from environment"""
-    return os.getenv("LLM_PROVIDER", "gemini").lower()
-
-
-def create_llm(provider: Optional[str] = None):
-    """Create LLM instance based on provider configuration"""
-    provider = provider or get_llm_provider()
-    
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment variables")
-        
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        return ChatOpenAI(
-            model_name=model,
-            temperature=0.9,
-            openai_api_key=api_key,
-            model_kwargs={}
-        )
-    else:  # Default to Gemini
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
-        
-        return ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.9,
-            google_api_key=api_key
-        )
+# Initial conversation seed (same as before, without using langchain.memory)
+_INITIAL_USER = "YOU ARE A CHAT BOT YOURS NAME IS \"STERO SONIC\" YOU WERE CREATED BY NAVANEETH. YOU NEED TO ANSWER ALL THE GENERAL QUESTIONS ASKED BY THE USERS."
+_INITIAL_AI = "Sure, I am STERO SONIC, a chatbot created by Navaneeth. I am here to answer your general questions to the best of my ability."
 
 
 class SteroSonicChatbot:
     def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
         self.provider = provider or get_llm_provider()
-        self.llm = create_llm(self.provider)
+        self.llm = create_llm(temperature=0.9)
         print(f"[LLM] Initialized chatbot with provider: {self.provider}")
         
-        self.memory = ConversationBufferMemory(return_messages=True)
-        
-        # System message
         self.system_message = """YOU ARE A CHAT BOT YOUR NAME IS "STERO SONIC" YOU WERE CREATED BY NAVANEETH. 
         YOU NEED TO ANSWER ALL THE GENERAL QUESTIONS ASKED BY THE USERS."""
-        
-        # Initialize conversation history
-        self.memory.chat_memory.add_user_message(
-            "YOU ARE A CHAT BOT YOURS NAME IS \"STERO SONIC\" YOU WERE CREATED BY NAVANEETH. YOU NEED TO ANSWER ALL THE GENERAL QUESTIONS ASKED BY THE USERS."
-        )
-        self.memory.chat_memory.add_ai_message(
-            "Sure, I am STERO SONIC, a chatbot created by Navaneeth. I am here to answer your general questions to the best of my ability."
-        )
+        # In-memory chat history (avoids langchain.memory for version compatibility)
+        self._chat_history = [
+            HumanMessage(content=_INITIAL_USER),
+            AIMessage(content=_INITIAL_AI),
+        ]
     
     def chat(self, message: str) -> str:
         """Chat with the assistant"""
         try:
-            # Add user message to memory
-            self.memory.chat_memory.add_user_message(message)
-            
-            # Create prompt with system message and history
-            messages = [
-                SystemMessage(content=self.system_message),
-            ] + self.memory.chat_memory.messages
-            
-            # Get response
+            self._chat_history.append(HumanMessage(content=message))
+            messages = [SystemMessage(content=self.system_message)] + self._chat_history
             response = self.llm.invoke(messages)
             response_text = response.content
-            
-            # Add AI response to memory
-            self.memory.chat_memory.add_ai_message(response_text)
-            
+            self._chat_history.append(AIMessage(content=response_text))
             return response_text
         except Exception as e:
             return f"Error: {str(e)}"
     
     def reset(self):
         """Reset conversation memory"""
-        self.memory.clear()
+        self._chat_history = [
+            HumanMessage(content=_INITIAL_USER),
+            AIMessage(content=_INITIAL_AI),
+        ]
 
 # Global instance (will be initialized in main)
 chatbot: Optional[SteroSonicChatbot] = None

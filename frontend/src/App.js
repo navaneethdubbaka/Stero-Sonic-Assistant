@@ -8,6 +8,10 @@ import Reminders from './components/Reminders';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 const WAKE_WORD = 'sonic';
+// Fixed delay: Chrome's speechSynthesis.onend is unreliable. Wait for TTS "Yes, I'm listening" (~2s) + echo buffer.
+const LISTEN_START_DELAY_MS = 2800;
+// Skip first transcript after restart - often captures residual TTS/echo
+const SKIP_FIRST_TRANSCRIPT = true;
 
 function App() {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' or 'reminders'
@@ -17,6 +21,9 @@ function App() {
   const [reasoning, setReasoning] = useState([]);
   const recognitionRef = useRef(null);
   const wakeWordDetectedRef = useRef(false);
+  const readyForCommandRef = useRef(false);
+  const skipNextTranscriptRef = useRef(false);  // Skip first transcript after we start listening (avoids echo)
+  const stoppedForTtsRef = useRef(false);
   const isRecognitionRunningRef = useRef(false);
   const isInitializedRef = useRef(false);
   const listeningStateRef = useRef('waiting');
@@ -78,18 +85,43 @@ function App() {
         if (!wakeWordDetectedRef.current) {
           if (transcript.includes(WAKE_WORD.toLowerCase())) {
             wakeWordDetectedRef.current = true;
+            readyForCommandRef.current = false;
+            skipNextTranscriptRef.current = SKIP_FIRST_TRANSCRIPT;
+            stoppedForTtsRef.current = true;
             listeningStateRef.current = 'command';
             setListeningState('command');
             setStatus({ message: 'Sonic activated! What can I help you with?', type: 'listening' });
+            // Stop recognition so mic doesn't capture TTS
+            safeStopRecognition();
             speakText('Yes, I\'m listening');
-            // Continue listening - recognition is already continuous, so it keeps going
+            // Fixed delay: Chrome's speechSynthesis.onend is unreliable. Wait for TTS + echo to clear.
+            setTimeout(() => {
+              stoppedForTtsRef.current = false;
+              readyForCommandRef.current = true;
+              safeStartRecognition();
+            }, LISTEN_START_DELAY_MS);
           }
         } else {
-          // Wake word already detected, this is the command
+          if (!readyForCommandRef.current) {
+            return;
+          }
+          // Skip first transcript after restart - often residual TTS/echo
+          if (skipNextTranscriptRef.current) {
+            skipNextTranscriptRef.current = false;
+            return;
+          }
+          // Block wake word and TTS echo (broad patterns - speech recognition varies)
+          const t = transcript.replace(/[',.]/g, '').trim();
+          const isSonic = t === 'sonic' || t === 'sonics';
+          const isTtsEcho = /^(yes|yeah|yep)\s+(i'?m|i\s+am)\s+listening$/i.test(t) ||
+            (t.includes('listening') && t.length < 30);
+          if (isSonic || isTtsEcho) {
+            return;
+          }
           wakeWordDetectedRef.current = false;
+          readyForCommandRef.current = false;
           listeningStateRef.current = 'processing';
           setListeningState('processing');
-          // Don't stop recognition here - let it continue for next time
           await handleCommand(transcript);
         }
       };
@@ -132,9 +164,13 @@ function App() {
         isRecognitionRunningRef.current = false;
         const currentState = listeningStateRef.current;
         
+        // We stopped to play TTS - don't restart here, speakTextWhenDone will do it
+        if (stoppedForTtsRef.current) {
+          return;
+        }
+        
         // If we're processing, wait a bit longer and then restart
         if (currentState === 'processing') {
-          // Wait for processing to finish, then restart
           setTimeout(() => {
             if (listeningStateRef.current === 'waiting' && !isRecognitionRunningRef.current) {
               wakeWordDetectedRef.current = false;
@@ -147,7 +183,6 @@ function App() {
         // Always restart after onend to maintain continuous listening
         setTimeout(() => {
           if (!isRecognitionRunningRef.current && listeningStateRef.current !== 'processing') {
-            // Reset wake word detection if command state ended
             if (wakeWordDetectedRef.current) {
               wakeWordDetectedRef.current = false;
               listeningStateRef.current = 'waiting';

@@ -1,61 +1,26 @@
 """
 Enhanced chatbot with Langchain tools integration and conversation memory
 The LLM can now automatically call tools based on user requests
-Supports both Gemini and OpenAI as LLM providers
+Supports local Ollama and API providers (Gemini/OpenAI) via llm_factory.
 """
 
-import os
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.agents import initialize_agent, AgentType
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain.memory import ConversationBufferWindowMemory
-from langchain.schema import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from typing import Optional, List
 
+from core.llm_factory import create_llm, get_llm_provider
 from core.tools import get_all_tools
-
-
-def get_llm_provider():
-    """Get the configured LLM provider from environment"""
-    return os.getenv("LLM_PROVIDER", "gemini").lower()
-
-
-def create_llm_for_tools(provider: Optional[str] = None):
-    """Create LLM instance based on provider configuration (optimized for tool use)"""
-    provider = provider or get_llm_provider()
-    
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment variables")
-        
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        return ChatOpenAI(
-            model_name=model,
-            temperature=0.7,
-            openai_api_key=api_key,
-            model_kwargs={}
-        )
-    else:  # Default to Gemini
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
-        
-        return ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.7,
-            google_api_key=api_key
-        )
 
 
 class SteroSonicChatbotWithTools:
     def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
         self.provider = provider or get_llm_provider()
         
-        # Initialize LLM based on provider
-        self.llm = create_llm_for_tools(self.provider)
+        # Initialize LLM from centralized factory (temperature 0.7 for tool use)
+        self.llm = create_llm(temperature=0.7)
         print(f"[LLM] Initialized chatbot with tools using provider: {self.provider}")
         
         # Get all tools
@@ -92,7 +57,10 @@ When users want you to perform actions:
 - Explain what you're doing
 - Confirm when tasks are complete
 
+You CAN open and close applications on the user's computer. When the user asks to open, launch, or start an application (e.g. "open Google Chrome", "open Notepad", "launch Spotify"), you MUST use the open_app tool with the application name. Do not say you cannot open applications—you can, using the open_app tool.
+
 You can help with:
+- Opening or closing applications (e.g. Google Chrome, Notepad, Spotify, any installed app)
 - General conversation and questions
 - Controlling a robot (movement, camera)
 - Playing music on Spotify

@@ -4,14 +4,14 @@ The LLM can now automatically call tools based on user requests
 Supports local Ollama and API providers (Gemini/OpenAI) via llm_factory.
 """
 
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents import AgentExecutor, create_react_agent, create_tool_calling_agent
 from langchain.agents import initialize_agent, AgentType
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferWindowMemory
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from typing import Optional, List
 
-from core.llm_factory import create_llm, get_llm_provider
+from core.llm_factory import create_llm, get_llm_provider, is_local_llm
 from core.tools import get_all_tools
 
 
@@ -19,12 +19,21 @@ class SteroSonicChatbotWithTools:
     def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
         self.provider = provider or get_llm_provider()
         
-        # Initialize LLM from centralized factory (temperature 0.7 for tool use)
-        self.llm = create_llm(temperature=0.7)
-        print(f"[LLM] Initialized chatbot with tools using provider: {self.provider}")
+        # Initialize LLM from centralized factory (temperature 0.7, for_tools=True for JSON format when using Ollama)
+        self.llm = create_llm(temperature=0.7, for_tools=True)
         
         # Get all tools
         self.tools = get_all_tools()
+        
+        # Bind tools to the LLM (required for tool-calling agent; improves Ollama native tool use)
+        if self.tools:
+            try:
+                self.llm = self.llm.bind_tools(self.tools)
+                print(f"[LLM] Initialized chatbot with tools using provider: {self.provider} (tools bound)")
+            except Exception as e:
+                print(f"[LLM] Could not bind tools, agent may use ReAct only: {e}")
+        else:
+            print(f"[LLM] Initialized chatbot with tools using provider: {self.provider}")
         
         # Create memory with sliding window (keeps last k conversations)
         self.memory = ConversationBufferWindowMemory(
@@ -57,10 +66,10 @@ When users want you to perform actions:
 - Explain what you're doing
 - Confirm when tasks are complete
 
-You CAN open and close applications on the user's computer. When the user asks to open, launch, or start an application (e.g. "open Google Chrome", "open Notepad", "launch Spotify"), you MUST use the open_app tool with the application name. Do not say you cannot open applications—you can, using the open_app tool.
+You CAN open and close applications on the user's computer. When the user asks to open, launch, or start an application (e.g. "open Google Chrome", "open Notepad", "launch Spotify", "open WhatsApp web"), you MUST use the open_app tool with the application name. For "WhatsApp web" or "open WhatsApp" use open_app with app_name "WhatsApp" or "Google Chrome" (to open WhatsApp Web in browser). Do not use robot or camera tools for opening apps. Do not say you cannot open applications—you can, using the open_app tool.
 
 You can help with:
-- Opening or closing applications (e.g. Google Chrome, Notepad, Spotify, any installed app)
+- Opening or closing applications (e.g. Google Chrome, Notepad, Spotify, WhatsApp, any installed app)
 - General conversation and questions
 - Controlling a robot (movement, camera)
 - Playing music on Spotify
@@ -76,10 +85,9 @@ Always be friendly and remember what the user has told you earlier in the conver
         self._initialize_agent()
     
     def _initialize_agent(self):
-        """Initialize the agent with tools"""
-        try:
-            # Use ReAct prompt template with conversation history
-            prompt_template = """You are STERO SONIC, a friendly AI assistant created by Navaneeth.
+        """Initialize the agent with tools: try tool-calling agent first, fallback to ReAct."""
+        # ReAct prompt for fallback
+        react_prompt_template = """You are STERO SONIC, a friendly AI assistant created by Navaneeth.
 
 {system_prompt}
 
@@ -90,10 +98,9 @@ You have access to the following tools:
 
 {tools}
 
-IMPORTANT: 
+IMPORTANT:
 - For general conversation and questions that don't require tools, just provide a direct, friendly response.
 - Only use tools when the user explicitly wants you to perform an action.
-- You can have normal conversations without using any tools.
 
 Use the following format:
 
@@ -106,7 +113,7 @@ Observation: the result of the action
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question (be conversational and friendly)
 
-If no tool is needed, just think and provide the Final Answer directly:
+If no tool is needed:
 Question: the input question you must answer
 Thought: This is a general question/conversation, I don't need any tools.
 Final Answer: [your friendly, conversational response]
@@ -115,60 +122,94 @@ Begin!
 
 Question: {input}
 Thought: {agent_scratchpad}"""
-            
-            prompt = PromptTemplate.from_template(prompt_template)
-            prompt = prompt.partial(system_prompt=self.system_prompt)
-            
-            agent = create_react_agent(self.llm, self.tools, prompt)
-            
+        react_prompt = PromptTemplate.from_template(react_prompt_template)
+        react_prompt = react_prompt.partial(system_prompt=self.system_prompt)
+
+        try:
+            # Try tool-calling agent first (better for Ollama native tool support)
+            tool_calling_prompt = ChatPromptTemplate.from_messages([
+                ("system", self.system_prompt),
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+            agent = create_tool_calling_agent(self.llm, self.tools, tool_calling_prompt)
             self.agent_executor = AgentExecutor(
                 agent=agent,
                 tools=self.tools,
                 verbose=True,
                 handle_parsing_errors=True,
                 max_iterations=5,
-                return_intermediate_steps=True
+                return_intermediate_steps=True,
             )
             self.use_agent_executor = True
-            print("[LLM] Successfully initialized ReAct agent with conversation memory")
+            self.use_tool_calling_agent = True
+            print("[LLM] Using tool-calling agent")
         except Exception as e:
-            # Fallback to initialize_agent
-            print(f"Warning: Could not use create_react_agent, trying initialize_agent: {e}")
+            # Fallback to ReAct agent
+            print(f"[LLM] Tool-calling agent failed, falling back to ReAct: {e}")
             try:
-                self.agent_executor = initialize_agent(
+                agent = create_react_agent(self.llm, self.tools, react_prompt)
+                self.agent_executor = AgentExecutor(
+                    agent=agent,
                     tools=self.tools,
-                    llm=self.llm,
-                    agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
-                    memory=self.memory,
                     verbose=True,
                     handle_parsing_errors=True,
                     max_iterations=5,
-                    agent_kwargs={
-                        "system_message": self.system_prompt
-                    }
+                    return_intermediate_steps=True,
                 )
-                self.use_agent_executor = False
-                print("[LLM] Successfully initialized CHAT_CONVERSATIONAL_REACT agent")
+                self.use_agent_executor = True
+                self.use_tool_calling_agent = False
+                print("[LLM] Successfully initialized ReAct agent with conversation memory")
             except Exception as e2:
-                print(f"Error initializing agent: {e2}")
-                raise
+                print(f"Warning: Could not use create_react_agent, trying initialize_agent: {e2}")
+                try:
+                    self.agent_executor = initialize_agent(
+                        tools=self.tools,
+                        llm=self.llm,
+                        agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
+                        memory=self.memory,
+                        verbose=True,
+                        handle_parsing_errors=True,
+                        max_iterations=5,
+                        agent_kwargs={
+                            "system_message": self.system_prompt
+                        }
+                    )
+                    self.use_agent_executor = False
+                    self.use_tool_calling_agent = False
+                    print("[LLM] Successfully initialized CHAT_CONVERSATIONAL_REACT agent")
+                except Exception as e3:
+                    print(f"Error initializing agent: {e3}")
+                    raise
     
     def _format_chat_history(self) -> str:
-        """Format conversation history for the prompt"""
+        """Format conversation history for the prompt (ReAct agent)."""
         if not self.conversation_history:
             return "No previous conversation."
-        
         formatted = []
-        # Only include last 10 exchanges to avoid prompt being too long
         recent_history = self.conversation_history[-20:]
-        
         for entry in recent_history:
             if entry["role"] == "user":
                 formatted.append(f"User: {entry['content']}")
             else:
                 formatted.append(f"Assistant: {entry['content']}")
-        
         return "\n".join(formatted)
+
+    def _get_chat_history_messages(self, exclude_last: int = 0):
+        """Return conversation history as list of messages (for tool-calling agent). exclude_last=1 to omit the current user message."""
+        if not self.conversation_history:
+            return []
+        recent = self.conversation_history[-20 - exclude_last:]
+        if exclude_last:
+            recent = recent[:-exclude_last]
+        messages = []
+        for entry in recent:
+            if entry["role"] == "user":
+                messages.append(HumanMessage(content=entry["content"]))
+            else:
+                messages.append(AIMessage(content=entry["content"]))
+        return messages
     
     def chat(self, message: str, return_reasoning: bool = False) -> dict:
         """Chat with the assistant using tools
@@ -193,11 +234,13 @@ Thought: {agent_scratchpad}"""
             
             # Use AgentExecutor style if available (better for step tracking)
             if hasattr(self, 'use_agent_executor') and self.use_agent_executor:
-                # AgentExecutor style - can capture intermediate steps
-                result = self.agent_executor.invoke({
-                    "input": message,
-                    "chat_history": chat_history
-                })
+                # Tool-calling agent expects chat_history as list of messages; ReAct expects string
+                if getattr(self, 'use_tool_calling_agent', False):
+                    history_messages = self._get_chat_history_messages(exclude_last=1)
+                    invoke_input = {"input": message, "chat_history": history_messages}
+                else:
+                    invoke_input = {"input": message, "chat_history": chat_history}
+                result = self.agent_executor.invoke(invoke_input)
                 
                 # Extract intermediate steps
                 if "intermediate_steps" in result and result["intermediate_steps"]:

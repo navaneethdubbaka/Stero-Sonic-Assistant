@@ -1,8 +1,14 @@
 import os
-import pywhatkit as kit
 import pyautogui
 import time
 from typing import Optional
+
+# pywhatkit checks internet at import time and raises if offline; load lazily so app can start without internet
+_kit = None
+try:
+    import pywhatkit as _kit
+except Exception:
+    _kit = None
 
 class WhatsAppService:
     def __init__(self):
@@ -37,6 +43,8 @@ class WhatsAppService:
     
     def send_message(self, name_or_number: str, message: str) -> dict:
         """Send WhatsApp message to a contact name (from contacts file) or a phone number."""
+        if _kit is None:
+            return {"success": False, "error": "WhatsApp unavailable (no internet or pywhatkit could not load). Connect to the internet and restart the app to use WhatsApp."}
         try:
             raw = (name_or_number or '').strip()
             phone_number = None
@@ -52,7 +60,7 @@ class WhatsAppService:
             # Send message instantly - increase wait_time for web to load chat
             # pywhatkit default is 20; we allow env override
             wait_time = max(10, int(self.whatsapp_wait))
-            kit.sendwhatmsg_instantly(phone_number, message, wait_time, tab_close=False)
+            _kit.sendwhatmsg_instantly(phone_number, message, wait_time, tab_close=False)
 
             # Additional buffer for slower loads
             time.sleep(2)

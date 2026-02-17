@@ -1,14 +1,20 @@
+import logging
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from typing import Optional
 
 from core.llm_factory import create_llm, get_llm_provider
 
-# Import tools-enabled chatbot as alternative
+# Import tools-enabled chatbot as alternative (catch any failure: ImportError, PydanticUserError, etc.)
+TOOLS_AVAILABLE = False
+get_chatbot_with_tools = None
+reset_tools_chatbot = None
+_tools_import_error = None
 try:
-    from core.chatbot_with_tools import get_chatbot_with_tools
+    from core.chatbot_with_tools import get_chatbot_with_tools, reset_chatbot as reset_tools_chatbot
     TOOLS_AVAILABLE = True
-except ImportError:
-    TOOLS_AVAILABLE = False
+except Exception as e:
+    _tools_import_error = str(e)
+    logging.exception("Tools-enabled chatbot failed to load (TOOLS_AVAILABLE=False): %s", e)
 
 # Initial conversation seed (same as before, without using langchain.memory)
 _INITIAL_USER = "YOU ARE A CHAT BOT YOURS NAME IS \"STERO SONIC\" YOU WERE CREATED BY NAVANEETH. YOU NEED TO ANSWER ALL THE GENERAL QUESTIONS ASKED BY THE USERS."

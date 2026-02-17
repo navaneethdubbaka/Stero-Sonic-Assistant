@@ -29,11 +29,17 @@ def create_llm(temperature: float = 0.9, for_tools: bool = False):
         from langchain_ollama import ChatOllama
         model = os.getenv("OLLAMA_MODEL", "llama3.2")
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        return ChatOllama(
-            model=model,
-            base_url=base_url,
-            temperature=temperature,
-        )
+        kwargs = {
+            "model": model,
+            "base_url": base_url,
+            "temperature": temperature,
+        }
+        if for_tools:
+            # Per LangChain Ollama docs: validate model on init when using tools (set OLLAMA_VALIDATE_MODEL_ON_INIT=false to disable)
+            val = os.getenv("OLLAMA_VALIDATE_MODEL_ON_INIT", "true").strip().lower()
+            kwargs["validate_model_on_init"] = val in ("true", "1", "yes")
+            # Do NOT set format="json" here: it makes the model return tool-call JSON as content instead of using native tool_calls, so no tool runs
+        return ChatOllama(**kwargs)
     # API-based providers
     provider = os.getenv("LLM_PROVIDER", "gemini").lower()
     if provider == "openai":

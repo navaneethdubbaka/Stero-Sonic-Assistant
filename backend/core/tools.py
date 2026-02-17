@@ -3,12 +3,13 @@ Langchain tools for Stereo Sonic Assistant
 These tools allow the LLM to interact with all services
 """
 
+import logging
 from langchain.tools import Tool
 try:
     from langchain_core.tools import StructuredTool
 except ImportError:
     from langchain.tools import StructuredTool
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 import json
 import sys
@@ -33,7 +34,7 @@ from services.reminder_service import get_reminder_service
 from services.spotify_service import get_spotify_service
 from services.robot_service import get_robot_service
 
-# Initialize services
+# Initialize services (required for tools)
 email_service = EmailService()
 whatsapp_service = WhatsAppService()
 camera_service = CameraService()
@@ -44,14 +45,23 @@ lens_service = LensService()
 notification_service = NotificationService()
 reminder_service = get_reminder_service()
 
-# Initialize Spotify service with play button template image
-spotify_service = get_spotify_service(play_button_image_path=r"E:\Stero Sonic Assistant\spotify_play.png")
+# Optional/brittle inits: do not fail the whole module so tools chatbot can load
+spotify_service = None
+try:
+    spotify_service = get_spotify_service(play_button_image_path=r"E:\Stero Sonic Assistant\spotify_play.png")
+except Exception as e:
+    logging.warning("Spotify service init failed, play_music tools will be unavailable: %s", e)
 
-# Initialize Robot service for Pi robot control
-robot_service = get_robot_service()
+robot_service = None
+try:
+    robot_service = get_robot_service()
+except Exception as e:
+    logging.warning("Robot service init failed, robot tools will be unavailable: %s", e)
 
-# Start notification monitoring on initialization
-notification_service.start_monitoring()
+try:
+    notification_service.start_monitoring()
+except Exception as e:
+    logging.warning("Notification monitoring start failed: %s", e)
 
 
 # Tool input schemas
@@ -66,12 +76,12 @@ class SendWhatsAppInput(BaseModel):
     phone_number: Optional[str] = Field(None, description="Recipient phone number with country code (e.g., +15551234567)")
     message: str = Field(description="Message to send via WhatsApp")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _require_name_or_number(cls, values):
-        if not values.get('name') and not values.get('phone_number'):
-            # Allow some agents that put recipient under 'to'
-            if values.get('to'):
-                values['name'] = values.get('to')
+        if not values.get("name") and not values.get("phone_number"):
+            if values.get("to"):
+                values["name"] = values.get("to")
         return values
 
 
@@ -117,11 +127,11 @@ class CloseAppsByNamesInput(BaseModel):
     names: Optional[List[str]] = Field(None, description="List of application names (e.g., ['chrome','spotify','notepad.exe']) to close")
     app_names: Optional[List[str]] = Field(None, description="Alias for names; some agents send 'app_names'")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _coalesce_names(cls, values):
-        # Accept either 'names' or 'app_names'
-        if (not values.get('names')) and values.get('app_names'):
-            values['names'] = values.get('app_names')
+        if isinstance(values, dict) and (not values.get("names")) and values.get("app_names"):
+            values["names"] = values.get("app_names")
         return values
 
 
@@ -304,6 +314,8 @@ def play_music(song_name: str = "", artist: str = "", platform: str = "spotify")
             return f"Failed to play music: {result.get('error', 'Unknown error')}"
         else:
             # Search and play on Spotify (default)
+            if spotify_service is None:
+                return "Spotify service is not available."
             try:
                 if artist and artist.strip():
                     result = spotify_service.play_song_directly(song_name, artist=artist)
@@ -758,6 +770,8 @@ def play_song_on_spotify(song_query: str, artist: str = "") -> str:
         - "play Shape of You by Ed Sheeran" → song_query="Shape of You", artist="Ed Sheeran"
         - "search for Coldplay songs on Spotify" → song_query="Coldplay"
     """
+    if spotify_service is None:
+        return "Spotify service is not available."
     try:
         if artist and artist.strip():
             result = spotify_service.play_song_directly(song_query, artist=artist)
@@ -783,6 +797,8 @@ def search_music(query: str, platform: str = "spotify") -> str:
     Returns:
         Status message
     """
+    if spotify_service is None:
+        return "Spotify service is not available."
     try:
         result = spotify_service.search_and_play(query, platform=platform)
         
@@ -812,6 +828,8 @@ def robot_move(direction: str = "stop", speed: int = 160, **kwargs) -> str:
         - "stop the robot" -> direction="stop"
         - "go back" -> direction="backward"
     """
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         # Debug: Print what we received
         print(f"[DEBUG robot_move] Raw input - direction: {direction!r} (type: {type(direction).__name__}), speed: {speed!r} (type: {type(speed).__name__}), kwargs: {kwargs}")
@@ -897,6 +915,8 @@ def robot_turn_right(speed: int = 160) -> str:
 
 def robot_stop(*args, **kwargs) -> str:
     """Stop the robot immediately"""
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         result = robot_service.stop()
         if result.get("success"):
@@ -916,6 +936,8 @@ def robot_set_servo(angle: int = 90, **kwargs) -> str:
     Returns:
         Status message
     """
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         # Handle various input formats from LLM
         if isinstance(angle, dict):
@@ -969,6 +991,8 @@ def robot_look(direction: str = "center", **kwargs) -> str:
         - "robot look right" -> direction="right"
         - "center the robot camera" -> direction="center"
     """
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         # Handle various input formats from LLM
         if isinstance(direction, dict):
@@ -1020,6 +1044,8 @@ def robot_capture_image(*args, **kwargs) -> str:
         - "capture image from robot camera"
         - "robot take a photo"
     """
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         result = robot_service.capture_image()
         if result.get("success"):
@@ -1031,6 +1057,8 @@ def robot_capture_image(*args, **kwargs) -> str:
 
 def robot_get_status(*args, **kwargs) -> str:
     """Get the robot connection status"""
+    if robot_service is None:
+        return "Robot service is not available."
     try:
         result = robot_service.get_status()
         if result.get("success"):

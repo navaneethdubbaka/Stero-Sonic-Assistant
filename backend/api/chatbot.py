@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -5,15 +6,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from core.chatbot import get_chatbot, TOOLS_AVAILABLE
+from core.chatbot import (
+    get_chatbot,
+    TOOLS_AVAILABLE,
+    get_chatbot_with_tools,
+    reset_tools_chatbot,
+    _tools_import_error,
+)
 from core.speech import tts
-
-# Try to import tools-enabled chatbot
-try:
-    from core.chatbot_with_tools import get_chatbot_with_tools, reset_chatbot as reset_tools_chatbot
-except ImportError:
-    get_chatbot_with_tools = None
-    reset_tools_chatbot = None
 
 router = APIRouter()
 
@@ -45,15 +45,19 @@ async def chat(chat_input: ChatInput):
                 response = chatbot.chat(chat_input.message, return_reasoning=False)
                 return {"success": True, "response": response, "tools_used": True}
         else:
-            # Use basic chatbot
+            # Use basic chatbot (tools unavailable or not requested)
             chatbot = get_chatbot()
             response = chatbot.chat(chat_input.message)
-            return {
+            out = {
                 "success": True,
                 "response": response,
                 "reasoning": ["Using basic chatbot mode (no tools)"],
-                "tools_used": False
+                "tools_used": False,
+                "tools_available": False,
             }
+            if _tools_import_error:
+                out["tools_unavailable_reason"] = _tools_import_error
+            return out
     except Exception as e:
         return {
             "success": False,
@@ -130,7 +134,9 @@ async def get_chatbot_status():
             "memory_enabled": True,
             "provider": "unknown"
         }
-        
+        if not tools_available and _tools_import_error:
+            status["tools_unavailable_reason"] = _tools_import_error
+
         if tools_available:
             chatbot = get_chatbot_with_tools()
             status["provider"] = chatbot.provider

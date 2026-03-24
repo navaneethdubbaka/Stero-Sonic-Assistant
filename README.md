@@ -1,4 +1,4 @@
-# Stereo Sonic Assistant
+# Stero Sonic Assistant
 
 A modern AI voice assistant built with FastAPI, React, Langchain + Gemini, and pywebview for a standalone desktop application.
 

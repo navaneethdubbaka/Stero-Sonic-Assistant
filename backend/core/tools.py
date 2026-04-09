@@ -4,6 +4,8 @@ These tools allow the LLM to interact with all services
 """
 
 import logging
+
+logger = logging.getLogger(__name__)
 from langchain.tools import Tool
 try:
     from langchain_core.tools import StructuredTool
@@ -33,6 +35,8 @@ from services.notification_service import NotificationService
 from services.reminder_service import get_reminder_service
 from services.spotify_service import get_spotify_service
 from services.robot_service import get_robot_service
+from services.web_search_results_service import fetch_top_search_results
+from services.cloudflare_crawl_service import crawl_single_page, get_credentials
 
 # Initialize services (required for tools)
 email_service = EmailService()
@@ -113,6 +117,26 @@ class SearchYouTubeInput(BaseModel):
 
 class SearchGoogleInput(BaseModel):
     query: str = Field(description="Search query for Google")
+
+
+class WebResearchInput(BaseModel):
+    query: str = Field(description="Search query to look up on the web and read page content from top results")
+    num_results: int = Field(
+        5,
+        description="How many top search results to open and fetch (1-10)",
+        ge=1,
+        le=10,
+    )
+    render: bool = Field(
+        False,
+        description="If true, Cloudflare executes JavaScript (slower, uses browser rendering quota). Use for heavy SPAs.",
+    )
+    pages_per_site: int = Field(
+        1,
+        description="Max pages to crawl per result URL (Cloudflare limit)",
+        ge=1,
+        le=50,
+    )
 
 
 class OpenAppInput(BaseModel):
@@ -277,6 +301,146 @@ def search_google(query: str) -> str:
     if result.get("success"):
         return f"Google search opened for: {query}"
     return f"Failed to search Google: {result.get('error', 'Unknown error')}"
+
+
+_WEB_RESEARCH_MAX_CHARS = 60_000
+_WEB_RESEARCH_LOG_PREVIEW = 3500
+
+
+def _web_research_assistant_footer(search_query: str) -> str:
+    """
+    Appended to tool output so the model answers in a fixed, user-friendly shape and does not
+    derail into unrelated technical essays (e.g. exploit analysis) unless the query asked for that.
+    """
+    q = (search_query or "").strip() or "the user's topic"
+    q_safe = q.replace('"', "'")
+    return (
+        "\n\n---\n"
+        "### Required format for your reply to the user\n"
+        f"1. Answer using **only** what the retrieved content above actually says about: **{q_safe}**.\n"
+        "2. Use plain language. Do **not** add long unrelated technical tangents (for example generic "
+        "kernel exploit walkthroughs) unless the user's question was specifically about that.\n"
+        f"3. After your main explanation, add this sentence on its own line: "
+        f'This is the information regarding "{q_safe}".\n'
+        "4. On the next line, write **Now summarise this:** and then give a **short summary** "
+        "(a few sentences) of the key points for the user.\n"
+    )
+
+
+def web_search_and_crawl(
+    query: str,
+    num_results: int = 5,
+    render: bool = False,
+    pages_per_site: int = 1,
+) -> str:
+    """
+    Search the web (Google via browser, with DuckDuckGo HTML fallback), then fetch each top result's
+    content through Cloudflare Browser Rendering crawl when credentials are configured.
+
+    Env: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Browser Rendering - Edit); optional WEB_RESEARCH_HEADLESS,
+    WEB_RESEARCH_ENGINE (google | duckduckgo). See services/cloudflare_crawl_service.py and
+    services/web_search_results_service.py.
+    """
+    logger.info(
+        "[web_research_tool] start query=%r num_results=%s render=%s pages_per_site=%s",
+        query,
+        num_results,
+        render,
+        pages_per_site,
+    )
+    serp = fetch_top_search_results(query, num_results=num_results)
+    if not serp.get("success"):
+        err = serp.get("error", "Unknown error")
+        logger.error("[web_research_tool] SERP failed query=%r error=%s source=%s", query, err, serp.get("source", ""))
+        return f"Web research failed: {err}"
+
+    results = serp.get("results") or []
+    account_id, token = get_credentials()
+    header = f"Search source: {serp.get('source', '')}\n"
+
+    if not account_id or not token:
+        logger.warning(
+            "[web_research_tool] Cloudflare credentials missing — returning SERP URLs only (no crawl) query=%r",
+            query,
+        )
+        lines = [
+            header,
+            "Note: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are not set — listing search URLs only.\n",
+        ]
+        for i, r in enumerate(results, 1):
+            u = r.get("url", "")
+            t = (r.get("title") or "").strip() or "(no title)"
+            lines.append(f"{i}. {t}\n   {u}")
+            logger.info("[web_research_tool] SERP-only listing %d: %s | %s", i, t, u)
+        return "\n".join(lines) + _web_research_assistant_footer(query)
+
+    parts: List[str] = [header, ""]
+    failures: List[str] = []
+
+    for i, r in enumerate(results, 1):
+        u = r.get("url", "")
+        title_hint = (r.get("title") or "").strip()
+        logger.info(
+            "[web_research_tool] crawling %d/%d url=%s serp_title=%r",
+            i,
+            len(results),
+            u,
+            title_hint[:80] if title_hint else "",
+        )
+        cr = crawl_single_page(
+            u,
+            limit=max(1, int(pages_per_site)),
+            render=bool(render),
+            formats=["markdown"],
+        )
+        display_title = title_hint or cr.get("title") or u
+        section = [f"## Result {i}: {display_title}", f"Source: {u}", ""]
+        body = (cr.get("markdown") or cr.get("html") or "").strip()
+        if body:
+            if not cr.get("ok") and cr.get("error"):
+                section.append(f"(Note: {cr.get('error')})")
+                logger.warning(
+                    "[web_research_tool] crawl had content but ok=false url=%s error=%s",
+                    u,
+                    cr.get("error"),
+                )
+            section.append(body)
+            preview = body[:_WEB_RESEARCH_LOG_PREVIEW]
+            if len(body) > _WEB_RESEARCH_LOG_PREVIEW:
+                preview += "\n... [log preview truncated]"
+            logger.info(
+                "[web_research_tool] scraped body for result %d url=%s chars=%s preview:\n%s",
+                i,
+                u,
+                len(body),
+                preview,
+            )
+        else:
+            err = cr.get("error") or "No content"
+            failures.append(f"- {u}: {err}")
+            section.append(f"(Crawl failed: {err})")
+            logger.error("[web_research_tool] crawl empty url=%s error=%s job_status=%s", u, err, cr.get("job_status"))
+            if title_hint:
+                section.append(f"SERP title only: {title_hint}")
+        parts.append("\n".join(section))
+
+    text = "\n\n".join(parts)
+    if failures:
+        text += "\n\n### Crawl issues\n" + "\n".join(failures)
+        logger.warning("[web_research_tool] crawl failures count=%d detail=%s", len(failures), failures)
+    if len(text) > _WEB_RESEARCH_MAX_CHARS:
+        text = text[:_WEB_RESEARCH_MAX_CHARS] + "\n\n[truncated — output exceeded character limit]"
+        logger.info(
+            "[web_research_tool] combined output truncated to %s chars for LLM",
+            _WEB_RESEARCH_MAX_CHARS,
+        )
+    logger.info(
+        "[web_research_tool] done query=%r output_chars=%s failure_lines=%s",
+        query,
+        len(text),
+        len(failures),
+    )
+    return text + _web_research_assistant_footer(query)
 
 
 def open_stackoverflow(*args, **kwargs) -> str:
@@ -1162,8 +1326,14 @@ def get_all_tools():
         StructuredTool.from_function(
             func=search_google,
             name="search_google",
-            description="Search Google for information. Use this when user wants to search the web or Google.",
+            description="Open Google search in the user's browser only (no page text for you). Use when the user wants to see Google in a browser window.",
             args_schema=SearchGoogleInput
+        ),
+        StructuredTool.from_function(
+            func=web_search_and_crawl,
+            name="web_search_and_crawl",
+            description="Search the web and return text from top results (Cloudflare crawl). After you read the tool output, answer on-topic only; end with the sentence 'This is the information regarding <query>.' then 'Now summarise this:' and a short summary. Prefer this over search_google when the user needs content.",
+            args_schema=WebResearchInput
         ),
         StructuredTool.from_function(
             func=open_stackoverflow,
@@ -1359,7 +1529,17 @@ def get_all_tools():
             Tool(
                 name="search_google",
                 func=lambda args: (lambda a=_parse_args(args): search_google(a.get('query', a.get('__arg', ''))))(),
-                description="Search Google for information"
+                description="Open Google in the browser (no page text)"
+            ),
+            Tool(
+                name="web_search_and_crawl",
+                func=lambda args: (lambda a=_parse_args(args): web_search_and_crawl(
+                    a.get("query", a.get("__arg", "")),
+                    int(a.get("num_results", 5)),
+                    bool(a.get("render", False)),
+                    int(a.get("pages_per_site", 1)),
+                ))(),
+                description="Search web and return crawled text; follow tool footer: end with This is the information regarding <query>. then Now summarise this: and a short summary."
             ),
             Tool(
                 name="open_stackoverflow",

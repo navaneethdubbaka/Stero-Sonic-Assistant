@@ -3,11 +3,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+import logging
 import os
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Web research / crawl logs (core.tools, services.*) use INFO; set LOG_LEVEL=DEBUG for more detail.
+_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+if not logging.root.handlers:
+    logging.basicConfig(
+        level=_log_level,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+else:
+    logging.getLogger().setLevel(_log_level)
+    for _log_name in (
+        "core.tools",
+        "services.cloudflare_crawl_service",
+        "services.web_search_results_service",
+    ):
+        logging.getLogger(_log_name).setLevel(_log_level)
 
 # Import routers
 try:
